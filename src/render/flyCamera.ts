@@ -29,7 +29,7 @@ export class FlyCamera {
   }
 
   update(dt: number): void {
-    const speed = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 250 : 70) * dt;
+    const speed = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 700 : 200) * dt;
     const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const p = this.camera.position;

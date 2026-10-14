@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HILL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE } from './constants';
+import { HILL_HEIGHT, RAIL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE, UNIT } from './constants';
 import { CollisionWorld, SURFACE } from '../physics/collision';
 import { MeshBuilder, type V3 } from './meshBuilder';
 import { decodeTerrain, decodeTile, footprint, type Dir, type Surface, type TileInfo } from './tiles';
@@ -67,6 +67,7 @@ function ribbon(
   lift: number,
   color: number,
   solid?: number,
+  guided = false,
 ): void {
   const edge = (i: number, o: number): V3 => {
     const p = path.pts[i]!;
@@ -74,6 +75,13 @@ function ribbon(
     return [p[0] + l[0] * o, p[1] + l[1] * o, p[2] + lift];
   };
   for (let i = 0; i < path.pts.length - 1; i++) {
+    let guide: V3 | undefined;
+    if (guided) {
+      const a = path.pts[i]!;
+      const b = path.pts[i + 1]!;
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) || 1;
+      guide = [(b[0] - a[0]) / l, (b[1] - a[1]) / l, (b[2] - a[2]) / l];
+    }
     mb.quad(
       edge(i, offset - halfW),
       edge(i, offset + halfW),
@@ -81,7 +89,22 @@ function ribbon(
       edge(i + 1, offset - halfW),
       color,
       solid,
+      guide,
     );
+  }
+}
+
+/** Side walls standing on the road edges (elevated roads and ramps have them in the original). */
+function rails(mb: MeshBuilder, path: Path, color: number): void {
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < path.pts.length - 1; i++) {
+      const at = (k: number, up: number): V3 => {
+        const p = path.pts[k]!;
+        const l = lateralAt(path, k);
+        return [p[0] + l[0] * ROAD_HALF_WIDTH * side, p[1] + l[1] * ROAD_HALF_WIDTH * side, p[2] + ROAD_LIFT + up];
+      };
+      mb.quad(at(i, 0), at(i + 1, 0), at(i + 1, RAIL_HEIGHT), at(i, RAIL_HEIGHT), color);
+    }
   }
 }
 
@@ -106,7 +129,7 @@ function skirt(mb: MeshBuilder, path: Path, halfW: number, color: number, toGrou
 const SURFACE_ID: Record<Surface, number> = { paved: SURFACE.Paved, dirt: SURFACE.Dirt, ice: SURFACE.Ice };
 
 /** Dashed stripe along the path centre: dashes of `dash` metres every `period` metres. */
-function dashedLine(mb: MeshBuilder, path: Path, halfW: number, color: number, dash = 3, period = 7): void {
+function dashedLine(mb: MeshBuilder, path: Path, halfW: number, color: number, dash = 85 * UNIT, period = 170 * UNIT): void {
   const pts = path.pts;
   let dist = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -120,7 +143,9 @@ function dashedLine(mb: MeshBuilder, path: Path, halfW: number, color: number, d
     while (s < len) {
       const phase = (dist + s) % period;
       const on = phase < dash;
-      const next = Math.min(len, s + (on ? dash - phase : period - phase));
+      // Always advance by a sensible amount: float rounding can leave a remainder of ~1e-15.
+      const step = on ? dash - phase : period - phase;
+      const next = Math.min(len, s + Math.max(step, 0.01));
       if (on && next - s > 0.05) {
         const at = (u: number, side: number): V3 => {
           const t = u / len;
@@ -141,25 +166,25 @@ function dashedLine(mb: MeshBuilder, path: Path, halfW: number, color: number, d
   }
 }
 
-function paintRoad(mb: MeshBuilder, path: Path, surface: Surface): void {
-  ribbon(mb, path, 0, ROAD_HALF_WIDTH, ROAD_LIFT, ROAD_COLOR[surface], SURFACE_ID[surface]);
+function paintRoad(mb: MeshBuilder, path: Path, surface: Surface, guided = false): void {
+  ribbon(mb, path, 0, ROAD_HALF_WIDTH, ROAD_LIFT, ROAD_COLOR[surface], SURFACE_ID[surface], guided);
   const line = CENTRE_LINE[surface];
-  if (line !== null) dashedLine(mb, path, 0.22, line);
+  if (line !== null) dashedLine(mb, path, 2 * UNIT, line);
 }
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
-function straightPath(c: [number, number], dir: Dir, h0 = 0, h1 = h0, segs = 1): Path {
-  const s: Sample[] = [];
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs;
-    s.push([0, (t - 0.5) * TILE, h0 + (h1 - h0) * smooth(t)]);
-  }
-  return framePath(c, dir, s);
+/** Straight piece; heights change linearly, like the original's ramps (one constant 24° slope). */
+function straightPath(c: [number, number], dir: Dir, h0 = 0, h1 = h0): Path {
+  return framePath(c, dir, [
+    [0, -TILE / 2, h0],
+    [0, TILE / 2, h1],
+  ]);
 }
 
 function pillar(mb: MeshBuilder, e: number, n: number, height: number): void {
-  mb.box(e - 1.2, n - 1.2, 0, e + 1.2, n + 1.2, Math.max(height - SLAB, 0.1), CONCRETE);
+  const w = 1.8;
+  mb.box(e - w, n - w, 0, e + w, n + w, Math.max(height - SLAB, 0.1), CONCRETE);
 }
 
 function startGantry(mb: MeshBuilder, c: [number, number], dir: Dir): void {
@@ -183,17 +208,19 @@ function startGantry(mb: MeshBuilder, c: [number, number], dir: Dir): void {
     const q = at(r1, f1, 0);
     mb.box(Math.min(p[0], q[0]), Math.min(p[1], q[1]), h0, Math.max(p[0], q[0]), Math.max(p[1], q[1]), h1, color);
   };
-  const side = ROAD_HALF_WIDTH + 1.6;
-  boxAt(-side - 0.9, -0.9, -side + 0.9, 0.9, 0, 10, GANTRY_PILLAR);
-  boxAt(side - 0.9, -0.9, side + 0.9, 0.9, 0, 10, GANTRY_PILLAR);
-  boxAt(-side + 0.9, -0.4, side - 0.9, 0.4, 7, 9.6, GANTRY_BANNER);
+  // Original banner: 264 units wide, 121 units tall.
+  const side = 132 * UNIT;
+  const top = 121 * UNIT;
+  boxAt(-side - 0.8, -0.8, -side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
+  boxAt(side - 0.8, -0.8, side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
+  boxAt(-side + 0.8, -0.4, side - 0.8, 0.4, top - 2.6, top, GANTRY_BANNER);
   // White pixel lettering on both faces, readable from either direction.
   for (const face of [-1, 1]) {
-    pixelText(mb, 'START', 0.36, (r, h, w, hh) => {
+    pixelText(mb, 'START', 0.3, (r, h, w, hh) => {
       const rr = face < 0 ? r : -r - w;
       const f = face * 0.42;
       mb.quad(at(rr, f, h), at(rr + w, f, h), at(rr + w, f, h + hh), at(rr, f, h + hh), 0xffffff);
-    }, 8.3);
+    }, top - 1.3);
   }
 }
 
@@ -256,65 +283,58 @@ function cornerPath(
 }
 
 /**
- * Loop profile in the (forward, height) plane: nearly round like the original's (radius 16 m at the
- * bottom, 8 m at the top, ~22 m tall). The slightly tighter top makes it drift forward by ~12 m
- * per turn, so entry and exit run a road-width apart instead of on top of each other.
- * Returns samples as [forward, height, arcLength] with forward measured from the loop's start.
+ * Loop centre line in the piece's local frame, measured from the original shape (GAME1 "loop"):
+ * an upright ring 898 units long and 975 tall, standing in the middle of its two tiles. The road
+ * shifts sideways by 202 units on the way in and 202 the other way inside the ring, so the two
+ * passes run side by side instead of through each other; S-bends lead in and out on the centre line.
+ * Returns [right, forward, height] samples.
  */
-export function loopProfile(n = 72): { f: number; h: number; s: number }[] {
-  const kBottom = 1 / 16;
-  const kTop = 1 / 8;
-  const out = [{ f: 0, h: 0, s: 0 }];
-  let f = 0;
-  let h = 0;
-  let s = 0;
-  const dphi = (2 * Math.PI) / n;
-  for (let i = 0; i < n; i++) {
-    const phi = (i + 0.5) * dphi;
-    const k = kBottom + ((kTop - kBottom) * (1 - Math.cos(phi))) / 2;
-    const ds = dphi / k;
-    f += Math.cos(phi) * ds;
-    h += Math.sin(phi) * ds;
-    s += ds;
-    out.push({ f, h, s });
+export function loopSamples(ringSegs = 64, bendSegs = 16): Sample[] {
+  const R = 449 * UNIT;
+  const H = 487.5 * UNIT;
+  const D = 202 * UNIT;
+  const out: Sample[] = [];
+  for (let i = 0; i <= bendSegs; i++) {
+    const t = i / bendSegs;
+    out.push([-D * smooth(t), -TILE + TILE * t, 0]);
+  }
+  for (let i = 1; i <= ringSegs; i++) {
+    const th = (i / ringSegs) * 2 * Math.PI;
+    out.push([D * (th / Math.PI - 1), R * Math.sin(th), H * (1 - Math.cos(th))]);
+  }
+  for (let i = 1; i <= bendSegs; i++) {
+    const t = i / bendSegs;
+    out.push([D * (1 - smooth(t)), TILE * t, 0]);
   }
   return out;
 }
 
-/**
- * Loop piece: the teardrop profile on the centre line. The rising and falling passes deliberately
- * cross each other (as a loop must); cars are ray-based and only ever see the surface under them,
- * so crossing is harmless and nobody has to steer inside the loop.
- */
 function loopPath(c: [number, number], dir: Dir): Path {
-  const prof = loopProfile();
-  const span = prof[prof.length - 1]!.f;
-  const f0 = -span / 2;
-  const samples: Sample[] = [[0, -TILE, 0], [0, f0 - 6, 0]];
-  for (const p of prof) samples.push([0, f0 + p.f, p.h]);
-  samples.push([0, f0 + span + 6, 0], [0, TILE, 0]);
-  return framePath(c, dir, samples, true);
+  return framePath(c, dir, loopSamples(), true);
 }
 
+/** Scenery at the original's sizes (palm 211, cactus 290, tree 300 units tall). */
 function addScenery(mb: MeshBuilder, e: number, n: number, type: 'palm' | 'cactus' | 'pine'): void {
   if (type === 'palm') {
-    mb.box(e - 0.4, n - 0.4, 0, e + 0.4, n + 0.4, 8, 0x7a5230);
-    mb.box(e - 3.5, n - 3.5, 8, e + 3.5, n + 3.5, 9, 0x2f8a2f);
+    mb.box(e - 0.8, n - 0.8, 0, e + 0.8, n + 0.8, 11, 0x7a5230);
+    mb.box(e - 5, n - 5, 11, e + 5, n + 5, 12.9, 0x2f8a2f);
   } else if (type === 'cactus') {
-    mb.box(e - 0.6, n - 0.6, 0, e + 0.6, n + 0.6, 6, 0x3c8c3c);
-    mb.box(e - 2.2, n - 0.4, 3, e - 0.6, n + 0.4, 3.8, 0x3c8c3c);
-    mb.box(e - 2.2, n - 0.4, 3, e - 1.4, n + 0.4, 5.2, 0x3c8c3c);
+    mb.box(e - 1.2, n - 1.2, 0, e + 1.2, n + 1.2, 17.7, 0x3c8c3c);
+    mb.box(e - 5, n - 0.8, 7, e - 1.2, n + 0.8, 8.6, 0x3c8c3c);
+    mb.box(e - 5, n - 0.8, 7, e - 3.4, n + 0.8, 12, 0x3c8c3c);
+    mb.box(e + 1.2, n - 0.8, 9, e + 4.4, n + 0.8, 10.6, 0x3c8c3c);
+    mb.box(e + 2.8, n - 0.8, 9, e + 4.4, n + 0.8, 14, 0x3c8c3c);
   } else {
-    const apex: V3 = [e, n, 14];
-    const r = 3.5;
+    const apex: V3 = [e, n, 18.3];
+    const r = 3.6;
     const base: V3[] = [
-      [e - r, n - r, 2],
-      [e + r, n - r, 2],
-      [e + r, n + r, 2],
-      [e - r, n + r, 2],
+      [e - r, n - r, 3],
+      [e + r, n - r, 3],
+      [e + r, n + r, 3],
+      [e - r, n + r, 3],
     ];
     for (let i = 0; i < 4; i++) mb.tri(base[i]!, base[(i + 1) % 4]!, apex, 0x1f5f2a);
-    mb.box(e - 0.5, n - 0.5, 0, e + 0.5, n + 0.5, 2, 0x5a3a20);
+    mb.box(e - 0.7, n - 0.7, 0, e + 0.7, n + 0.7, 3, 0x5a3a20);
   }
 }
 
@@ -388,21 +408,24 @@ export function buildTrack(track: Track): BuiltTrack {
           const p = straightPath(c, info.axis === 'NS' ? 'N' : 'E', HILL_HEIGHT);
           paintRoad(mb, p, 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, false);
+          rails(mb, p, CONCRETE);
           pillar(mb, c[0], c[1], HILL_HEIGHT);
           break;
         }
         case 'ramp': {
-          const p = straightPath(c, info.dir, 0, HILL_HEIGHT, 10);
+          const p = straightPath(c, info.dir, 0, HILL_HEIGHT);
           paintRoad(mb, p, 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.style === 'solid');
+          rails(mb, p, CONCRETE);
           if (info.style === 'elevated') {
             const fr = FRAME[info.dir];
-            pillar(mb, c[0] + fr.f[0] * TILE * 0.3, c[1] + fr.f[1] * TILE * 0.3, HILL_HEIGHT * 0.9);
+            pillar(mb, c[0] + fr.f[0] * TILE * 0.25, c[1] + fr.f[1] * TILE * 0.25, HILL_HEIGHT * 0.75);
           }
           break;
         }
         case 'loop':
-          paintRoad(mb, loopPath(c, info.axis === 'NS' ? 'N' : 'E'), 'paved');
+          // The car is guided through the whole loop piece, as you can't steer in the original's loop.
+          paintRoad(mb, loopPath(c, info.axis === 'NS' ? 'N' : 'E'), 'paved', true);
           break;
         case 'corner':
           paintRoad(mb, cornerPath([x, z], info), info.surface);
@@ -421,7 +444,7 @@ export function buildTrack(track: Track): BuiltTrack {
   gm.polygonOffsetFactor = 2;
   gm.polygonOffsetUnits = 4;
   group.add(groundMesh, mb.build());
-  const world = new CollisionWorld(mb.solidPositions, mb.solidSurfaces);
-  for (const [x, z] of waterTiles) world.addWater(x, z);
+  const world = new CollisionWorld(mb.solidPositions, mb.solidSurfaces, mb.solidGuides);
+  for (const [x, z] of waterTiles) world.addWater(x, z, TILE);
   return { group, world };
 }

@@ -24,16 +24,18 @@ const dash = new Dashboard();
 dash.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated';
 frame.appendChild(dash.canvas);
 
-let sharp = new URLSearchParams(location.search).has('sharp');
+// P cycles the 3D resolution: 640x400 (default: VGA proportions, less blocky), 320x200 (exactly the
+// original), native. The dashboard always stays at 320x200 like the original's artwork.
+const RES_MODES = [2, 1, 0] as const; // multiples of 320x200; 0 = native
+let resMode = Number(new URLSearchParams(location.search).get('res') ?? 2);
 function layout(): void {
   const scale = Math.min(window.innerWidth / SCREEN_W, window.innerHeight / SCREEN_H);
   const w = Math.floor(SCREEN_W * scale);
   const h = Math.floor(SCREEN_H * scale);
   frame.style.width = `${w}px`;
   frame.style.height = `${h}px`;
-  // Authentic: 320x200 back buffer. Sharp: native resolution, same framing.
-  renderer.setPixelRatio(sharp ? Math.min(window.devicePixelRatio, 2) : 1);
-  renderer.setSize(sharp ? w : SCREEN_W, sharp ? h : SCREEN_H, false);
+  renderer.setPixelRatio(resMode === 0 ? Math.min(window.devicePixelRatio, 2) : 1);
+  renderer.setSize(resMode === 0 ? w : SCREEN_W * resMode, resMode === 0 ? h : SCREEN_H * resMode, false);
 }
 layout();
 window.addEventListener('resize', layout);
@@ -92,7 +94,7 @@ function loadScene(h: Horizon): void {
   if (start) {
     const f = ({ N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] } as const)[start.dir];
     // Start a little behind the line so the player drives through it.
-    startPose = { pos: [start.centre[0] - f[0] * 8, start.centre[1] - f[1] * 8, 0.75], heading: start.dir };
+    startPose = { pos: [start.centre[0] - f[0] * 12, start.centre[1] - f[1] * 12, 1], heading: start.dir };
   }
   horizonView = createHorizon(h);
   scene.add(horizonView.group);
@@ -116,14 +118,14 @@ window.addEventListener('keydown', (e) => {
     horizon = ((horizon + 1) % 5) as Horizon;
     loadScene(horizon);
   } else if (e.code === 'KeyP') {
-    sharp = !sharp;
+    resMode = RES_MODES[(RES_MODES.indexOf(resMode as 2 | 1 | 0) + 1) % RES_MODES.length]!;
     layout();
   }
 });
 
 // ---- debug params ---------------------------------------------------------------------------
 // ?cam=x,y,z,yawDeg,pitchDeg  free camera pose (render space) · ?car=e,n,u,H,speed  spawn the car
-// ?view=chase|cockpit|free    initial view · ?sharp  full resolution
+// ?view=chase|cockpit|free    initial view · ?res=1|2|0  320x200, 640x400 or native
 const params = new URLSearchParams(location.search);
 loadScene(horizon);
 const carParam = params.get('car');
@@ -187,20 +189,20 @@ renderer.setAnimationLoop((now) => {
   const up = quatRotate(qi, [0, 0, 1]);
   if (view === 'cockpit') {
     // Driver's eye, looking slightly down so the horizon sits above the dashboard like the original.
-    const eye = toThree([pos[0] + up[0] * 0.6 - fwd[0] * 0.2, pos[1] + up[1] * 0.6 - fwd[1] * 0.2, pos[2] + up[2] * 0.6 - fwd[2] * 0.2]);
+    const eye = toThree([pos[0] + up[0] * 0.8 - fwd[0] * 0.3, pos[1] + up[1] * 0.8 - fwd[1] * 0.3, pos[2] + up[2] * 0.8 - fwd[2] * 0.3]);
     camera.position.copy(eye);
     camera.up.copy(toThree(up));
-    camera.lookAt(toThree([pos[0] + fwd[0] * 20 - up[0] * 2.2, pos[1] + fwd[1] * 20 - up[1] * 2.2, pos[2] + fwd[2] * 20 - up[2] * 2.2]));
+    camera.lookAt(toThree([pos[0] + fwd[0] * 25 - up[0] * 2.8, pos[1] + fwd[1] * 25 - up[1] * 2.8, pos[2] + fwd[2] * 25 - up[2] * 2.8]));
   } else if (view === 'chase') {
     camera.up.set(0, 1, 0);
     const hl = Math.hypot(fwd[0], fwd[1]) || 1;
-    const target = toThree([pos[0] - (fwd[0] / hl) * 10, pos[1] - (fwd[1] / hl) * 10, pos[2] + 3.4]);
+    const target = toThree([pos[0] - (fwd[0] / hl) * 13, pos[1] - (fwd[1] / hl) * 13, pos[2] + 4.3]);
     if (!camInit) {
       camPos.copy(target);
       camInit = true;
     } else camPos.lerp(target, 1 - Math.exp(-5 * frameDt));
     camera.position.copy(camPos);
-    camera.lookAt(toThree([pos[0], pos[1], pos[2] + 1]));
+    camera.lookAt(toThree([pos[0], pos[1], pos[2] + 1.3]));
   } else {
     camera.up.set(0, 1, 0);
     fly.update(frameDt);

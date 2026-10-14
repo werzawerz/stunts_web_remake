@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSampleTrack } from '../track/sampleTrack';
+import { TILE } from '../track/constants';
 import { buildTrack } from '../track/trackBuilder';
 import { CollisionWorld } from './collision';
 import { createCar, DEFAULT_CAR, INPUT, speedOf, stateHash, stepCar, type CarState, type Heading } from './car';
@@ -93,45 +94,60 @@ describe('Stunts-style car model', () => {
     expect(speedOf(r.s) * 3.6).toBeLessThan(130);
   });
 
+  // Demo track landmarks, in tiles (x east, z north): start/finish (10,5) heading east, loop on
+  // tiles 14-15 of row 5, ramp up at (23,8), elevated (23,9..11), ramp down at (23,12), pond 10-13 x 12-15.
+  const T = (x: number): number => x * TILE;
+  const RIDE = 0.1 + DEFAULT_CAR.rideHeight;
+
   it('is deterministic: same inputs give the same state hash', () => {
     const script = (t: number): number =>
       INPUT.Throttle | (t % 120 < 40 ? INPUT.Left : t % 120 < 80 ? INPUT.Right : 0) | (t % 300 > 250 ? INPUT.Brake : 0);
-    const a = run(sample, [190, 110, 0.7], 'E', 0, 900, script).s;
-    const b = run(sample, [190, 110, 0.7], 'E', 0, 900, script).s;
+    const a = run(sample, [T(10), T(5.5), RIDE], 'E', 0, 900, script).s;
+    const b = run(sample, [T(10), T(5.5), RIDE], 'E', 0, 900, script).s;
     expect(stateHash(a)).toBe(stateHash(b));
   });
 
   it('drives the demo start straight', () => {
-    const { s } = run(sample, [190, 110, 0.7], 'E', 0, 60 * 3, INPUT.Throttle);
+    const { s } = run(sample, [T(10), T(5.5), RIDE], 'E', 0, 60 * 3, INPUT.Throttle);
     expect(s.vel[0]).toBeGreaterThan(14);
-    expect(Math.abs(s.pos[1] - 110)).toBeLessThan(0.5);
+    expect(Math.abs(s.pos[1] - T(5.5))).toBeLessThan(0.5);
     expect(s.grounded).toBe(true);
   });
 
-  it('goes round the loop with enough speed', () => {
-    const r = run(sample, [250, 110, 0.7], 'E', 25, 60 * 5, INPUT.Throttle);
+  it('goes round the loop with enough speed, guided, and comes out on the centre line', () => {
+    const r = run(sample, [T(13.2), T(5.5), RIDE], 'E', 42, 60 * 9, INPUT.Throttle);
     expect(r.s.crashed).toBe(false);
-    expect(r.maxU).toBeGreaterThan(19);
-    expect(r.s.pos[0]).toBeGreaterThan(330);
+    expect(r.maxU).toBeGreaterThan(55);
+    expect(r.s.pos[0]).toBeGreaterThan(T(16.5));
+    expect(Math.abs(r.s.pos[1] - T(5.5))).toBeLessThan(5); // still well on the 14.6 m road
     expect(upZ(r.s)).toBeGreaterThan(0.95);
     expect(r.s.grounded).toBe(true);
   });
 
   it('falls out of the loop when too slow', () => {
-    const r = run(sample, [270, 110, 0.7], 'E', 15, 60 * 5, 0);
-    expect(r.maxU).toBeLessThan(21);
-    expect(r.s.pos[0]).toBeLessThan(320);
+    const r = run(sample, [T(14), T(5.5), RIDE], 'E', 22, 60 * 6, 0);
+    expect(r.maxU).toBeLessThan(55);
+    expect(r.s.pos[0]).toBeLessThan(T(16));
   });
 
   it('climbs the ramp onto the elevated section', () => {
-    const r = run(sample, [470, 130, 0.7], 'N', 20, 60 * 3, INPUT.Throttle);
+    const r = run(sample, [T(23.5), T(7.3), RIDE], 'N', 15, 60 * 6, INPUT.Throttle);
     expect(r.s.crashed).toBe(false);
-    expect(r.maxU).toBeGreaterThan(10);
-    expect(r.s.pos[1]).toBeGreaterThan(190);
+    expect(r.maxU).toBeGreaterThan(27);
+    expect(r.s.pos[1]).toBeGreaterThan(T(9.5));
+  });
+
+  it('takes the ramp, elevated road and descent flat out without crashing', () => {
+    for (const v0 of [20, 35, 50]) {
+      const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', v0, 60 * 14, INPUT.Throttle);
+      expect(r.s.crashed, `entry speed ${v0} m/s: ${r.s.crashReason}`).toBe(false);
+      expect(r.s.pos[1]).toBeGreaterThan(T(13));
+      expect(r.maxU).toBeLessThan(27.5 + 25); // a hop over the crest, not a launch into orbit
+    }
   });
 
   it('crashes when driven into the pond', () => {
-    const { s } = run(sample, [240, 200, 0.7], 'N', 20, 60 * 3, INPUT.Throttle);
+    const { s } = run(sample, [T(12), T(11), RIDE], 'N', 20, 60 * 5, INPUT.Throttle);
     expect(s.crashed).toBe(true);
     expect(s.crashReason).toBe('splash');
   });

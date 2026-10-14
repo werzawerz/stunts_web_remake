@@ -76,14 +76,17 @@ Rebuilt after user feedback that the rigid-body/suspension version "did not feel
 - Brakes: **constant deceleration** (~0.95 g), independent of grip and mass. Holding brake at a standstill engages reverse (throttle then brakes).
 - Cornering: bicycle-model yaw, capped at the front-grip limit; lateral slip removed at ≤ grip·g per second, so the car holds its line until ~1.2 g, then slides (`state.slip`).
 - Surfaces: grip asphalt 1, dirt 0.75, ice 0.25, grass 0.5; grass adds a 0.144·v slowdown.
-- Planted: each substep the car is re-projected onto the road under it and its velocity turned into the road plane (magnitude kept, so loops keep speed). It **takes off** only if the road falls away by more than gravity pulls in that substep (+ a small facet allowance). In the air: ballistic, spin kept from take-off; landing with tilt < 0.55 or > 25 m/s into the road = crash.
+- Planted: each substep the car is re-projected onto the road under it and its velocity turned into the road plane (magnitude kept, so loops keep speed). It **takes off** only if the road falls away by more than gravity pulls in that substep (+ a small facet allowance), e.g. at a ramp crest.
+- In the air: ballistic, **no spin from the road** (a road kink measured over one substep produced backflips); the nose turns slowly (0.8 rad/s) to follow the flight path so jumps land along their arc. Landing crashes only when really bad: tilt < 0.35 or > 32 m/s into the road.
+- Guided road (loops): triangles carry a road direction; the car heading and velocity are turned along it and steering is ignored there.
 - Ray hits prefer the surface aligned with the car's up (`CollisionWorld.raycast(..., prefer)`) so a car follows *its* road where two cross (loops).
-- Loop: nearly round (bottom radius 16 m, top 8 m, ~22 m tall); entry/exit 12 m apart; needs ~80 km/h.
+- Loop: the original ring (≈55 m long, 59 m tall) with its sideways shift; needs ~150 km/h; slower and you fall out.
+- World scale is the original's (tile 62.4 m, see skill `stunts-track-format`). The car is drawn 1.25× real size and has a 3.1 m wheelbase so car/road proportions match the original.
 - Hills still have no side walls (cars pass through hill sides). No car-vs-object collisions yet.
 - Debug URLs: `?car=e,n,u,H,speed` spawn the car, `?cam=...` free camera, `?view=chase|cockpit|free`, `?sharp` full resolution.
 
 ## Look (matches screenshots of the original)
-- 3D renders into a **320×200** back buffer, CSS-scaled with `image-rendering: pixelated` (P toggles sharp mode).
+- 3D renders into a **640×400** back buffer by default (P cycles 320×200 / native), CSS-scaled with `image-rendering: pixelated`. The dashboard overlay is always drawn at 320×200.
 - Unlit `MeshBasicMaterial`; shading is baked per face in `MeshBuilder` (a few discrete shades) and every colour is snapped to VGA 6-bit steps (`vgaQuantize`).
 - Flat ground (one seamless quad: a tiled ground cracks open at 320×200), flat cyan sky, far hills + dark tree-line band + flat clouds (`render/horizon.ts`).
 - Roads: grey asphalt with a yellow dashed centre line, no edge lines. Start gantry: two beige pillars and a red banner with pixel lettering.

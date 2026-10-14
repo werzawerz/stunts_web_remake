@@ -94,12 +94,36 @@ Scenery: ghost player 02, ghost opponent 03, palm 97, cactus 98, pine 99, tennis
 - Missing fillers are legal ("illusion tracks"); don't crash, just render the piece.
 - B6–FC are undocumented; treat as blank for gameplay.
 
+## Original dimensions (measured from GAME1/GAME2.P3S with `tools/stunts`)
+1 game unit = 1/5 ft = 0.06096 m (also the physics position unit: 1 mph = 11/30 units per 0.05 s tick).
+| Thing | Units | Metres |
+|---|---|---|
+| Tile pitch | 1024 (shapes span ±514) | 62.4 |
+| Road width | 240 (±120) | 14.6 |
+| Hill / elevated road surface / ramp top | 450 | 27.4 |
+| Side walls on elevated roads & ramps | +30 above road | 1.8 |
+| Ramp (`ramp`, `sram`) | linear 0→450 over one tile (24°) | |
+| Sharp corner | arc radius 512 around the tile corner | 31.2 |
+| Large corner (2×2) | arc radius 1536 | 93.6 |
+| Loop (`loop`/`loo1`) | ring 898 long × 975 tall, centred on the 2-tile piece; centre line shifts −202 → +202 sideways through the ring, S-bends in/out on `loo1` | 59 m tall |
+| Centre line | 4 wide, dashes ~85 long every ~170 | 0.24 / 5.2 / 10.4 |
+| Start banner (`fini`) | 264 wide × 121 tall | 16 × 7.4 |
+| Scenery heights | palm 211, cactus 290, tree 300, windmill 495, office 550 | |
+| Cars (`car1` in ST*.P3S) | ~40 wide × ~104 long | ≈ 1/6 of the road width |
+Shape axes: x right, y up, z forward (along the piece). Shape ids: `road`, `turn` (sharp), `stur` (large), `loop`/`loo1`, `ramp`, `sram`, `elrd`, `elsp`, `goup`/`goui`/`gouo` (hills), `fini`, etc. Ids starting with `z` are low-detail versions.
+
 ## Our world conventions (decided by us, keep consistent)
-- Constants live in `src/track/constants.ts`: `TILE` = 20 m, `ROAD_HALF_WIDTH` = 6 m, `HILL_HEIGHT` = 10 m, `SLAB` = 0.8 m.
+- Constants live in `src/track/constants.ts` and are derived from the table above: `UNIT`, `TILE` = 1024 units, `ROAD_HALF_WIDTH` = 120, `HILL_HEIGHT` = 450, `RAIL_HEIGHT` = 30, plus our `SLAB` thickness.
 - Grid/sim space is (east, north, up). Tile (x,z) occupies [x·TILE,(x+1)·TILE] × [z·TILE,(z+1)·TILE].
 - **Three.js is right-handed with +Y up, so render space is (east, up, −north)**: north = −Z. `MeshBuilder` does this conversion; keep sim code in (east, north, up).
-- Multi-tile pieces extend **east and south** from the NW anchor tile (anchor (x,z) covers x..x+w−1, z−h+1..z). Fillers: FE = tile south of the anchor, FD = south-east, FF = east.
-- Corner pieces: the arc centre is the block corner lying between the two connected edges; radius 0.5 tile (sharp) or 1.5 tiles (large). A rectangular circuit's corners therefore use the edge pair on the *inside* of the bend.
-- Hill (terrain 06) height and elevated road height are the same level (`HILL_HEIGHT`), as in the original where elevated roads connect to hills.
-- Not yet built: coasts, angled slopes (rendered flat), banked/cork/pipe/tunnel/highway pieces, split corners, chicanes.
-- Physical model in the original is built from shared planes (GAME.PRE `plan` resource, normals scaled to 8192); we instead generate analytic surfaces per piece (see `stunts-project-conventions`).
+- Multi-tile pieces extend **east and south** from the NW anchor tile (anchor (x,z) covers x..x+w−1, z−h+1..z). Fillers: FE = tile south of the anchor, FD = south-east, FF = east. Confirmed against DEFAULT.TRK (FE/FD appear in row 0 = south edge).
+- Corner pieces: the arc centre is the block corner lying between the two connected edges; radius 0.5 tile (sharp) or 1.5 tiles (large).
+- Ramps are straight lines (constant slope), never eased: a car flying off the top crest is expected, as in the original.
+- Loop: `loopSamples()` reproduces the original ring; its road triangles carry a *guide* direction so the car is steered through the piece (no steering inside loops).
+- Not yet built: coasts, angled slopes (rendered flat), banked/cork/pipe/tunnel/highway pieces, split corners, chicanes, buildings.
+
+## Reading the original files (local only)
+The user's own Stunts 1.1 copy lives in `original_game/STUNTS11/` (git-ignored, never committed or shipped).
+- `node tools/stunts/inspect.mjs original_game/STUNTS11/GAME1.P3S` lists shapes with bounding boxes; add a shape id to dump its vertices and polygons.
+- `tools/stunts/formats.mjs`: our own decoder for the packed format (Huffman + RLE passes), resource containers, and 3D shapes (format facts from wiki.stunts.hu and the GPL stressed editor; no code copied).
+- Use these for measurements only. Never import original geometry, bitmaps or sounds into the game.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { loopProfile } from './trackBuilder';
 import { buildSampleTrack } from './sampleTrack';
-import { buildTrack } from './trackBuilder';
+import { buildTrack, loopSamples } from './trackBuilder';
+import { TILE } from './constants';
 import { decodeTile } from './tiles';
 import { GRID, Horizon, parseTrk, serializeTrk } from './trkFormat';
 
@@ -38,15 +38,22 @@ describe('buildTrack', () => {
   });
 });
 
-describe('loopProfile', () => {
-  it('fits two tiles, closes at ground level, and tops out around 20 m', () => {
-    const p = loopProfile();
+describe('loopSamples', () => {
+  it('matches the original loop: ~59 m tall ring, centred, entry/exit on the centre line', () => {
+    const p = loopSamples();
+    const first = p[0]!;
     const last = p[p.length - 1]!;
-    expect(last.f).toBeGreaterThan(11); // entry and exit a road width apart
-    expect(last.f).toBeLessThan(40);
-    expect(Math.abs(last.h)).toBeLessThan(0.01);
-    const top = Math.max(...p.map((q) => q.h));
-    expect(top).toBeGreaterThan(18);
-    expect(top).toBeLessThan(26);
+    expect(first[0]).toBeCloseTo(0, 6);
+    expect(first[1]).toBeCloseTo(-TILE, 6);
+    expect(first[2]).toBe(0);
+    expect(last[0]).toBeCloseTo(0, 6);
+    expect(last[1]).toBeCloseTo(TILE, 6);
+    const top = Math.max(...p.map((q) => q[2]));
+    expect(top).toBeGreaterThan(58);
+    expect(top).toBeLessThan(61);
+    // The passes are a road width apart sideways where they meet at the bottom of the ring.
+    const bottoms = p.filter((q) => q[2] === 0 && Math.abs(q[1]) < 1);
+    const spread = Math.max(...bottoms.map((q) => q[0])) - Math.min(...bottoms.map((q) => q[0]));
+    expect(spread).toBeGreaterThan(20);
   });
 });

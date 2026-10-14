@@ -91,9 +91,9 @@ export const DEFAULT_CAR: CarSpec = {
   drag: 0.55,
   brakeDecel: 0.95 * G,
   grip: 1.2,
-  wheelbase: 2.5,
-  halfTrack: 0.8,
-  rideHeight: 0.5,
+  wheelbase: 3.1,
+  halfTrack: 1.0,
+  rideHeight: 0.6,
   maxSteerTan: 0.42,
   steerFalloff: 32,
 };
@@ -168,6 +168,13 @@ function probe(world: CollisionWorld, spec: CarSpec, pos: Vec3, up: Vec3, reach:
   return hit ? { hit, n: hit.n } : null;
 }
 
+/** Road direction from a guide vector, oriented like the current heading and lying in the road plane. */
+function alongGuide(guide: Vec3, fwd: Vec3, n: Vec3): Vec3 {
+  const g = dot(guide, fwd) < 0 ? scale(guide, -1) : guide;
+  const p = normalize(sub(g, scale(n, dot(g, n))));
+  return length(p) > 0.5 ? p : fwd;
+}
+
 function crash(s: CarState, reason: string): void {
   if (s.crashed) return;
   s.crashed = true;
@@ -214,8 +221,10 @@ function groundStep(
   const n = here.n;
   s.surface = here.hit.surface;
   const mu = SURFACE_GRIP[s.surface]!;
-  // Basis aligned with the road.
+  // Basis aligned with the road; guided pieces (loops) set the heading themselves.
+  const guide = here.hit.guide;
   let fwd = normalize(sub(fwd0, scale(n, dot(fwd0, n))));
+  if (guide) fwd = alongGuide(guide, fwd, n);
   let right = cross(fwd, n);
 
   let vel = sub(s.vel, scale(n, dot(s.vel, n)));
@@ -263,7 +272,7 @@ function groundStep(
   // --- steering: bicycle model, yaw limited by front grip -------------------------------------
   vf = dot(vel, fwd);
   const steerTan = (s.steer * spec.maxSteerTan) / (1 + (vf / spec.steerFalloff) ** 2);
-  let yaw = (vf * steerTan) / spec.wheelbase;
+  let yaw = guide ? 0 : (vf * steerTan) / spec.wheelbase;
   const maxYaw = (gripAccel * 1.15) / Math.max(Math.abs(vf), 1);
   yaw = Math.max(-maxYaw, Math.min(maxYaw, yaw));
   fwd = normalize(add(fwd, scale(right, yaw * h)));
@@ -283,7 +292,8 @@ function groundStep(
     s.vel = vel;
     s.pos = pos;
     s.quat = quatFromBasis(right, fwd, n);
-    s.angVel = angularVelocityBetween(qBefore, s.quat, h);
+    // No tumbling from road kinks: the car leaves the road with the attitude it had.
+    s.angVel = [0, 0, 0];
     s.grounded = false;
   };
   if (!there) return takeOff();
@@ -301,6 +311,11 @@ function groundStep(
   const vt = sub(vel, scale(n2, dot(vel, n2)));
   vel = length(vt) > 1e-6 ? scale(normalize(vt), spd) : vt;
   fwd = normalize(sub(fwd, scale(n2, dot(fwd, n2))));
+  if (there.hit.guide) {
+    fwd = alongGuide(there.hit.guide, fwd, n2);
+    // Keep the car's speed but point it down the guided road.
+    vel = scale(fwd, Math.sign(dot(vel, fwd)) * length(vel));
+  }
   right = cross(fwd, n2);
   s.pos = pos;
   s.vel = vel;
@@ -308,12 +323,27 @@ function groundStep(
   s.angVel = angularVelocityBetween(qBefore, s.quat, h);
 }
 
+/** Max rate (rad/s) at which an airborne car's nose turns to follow its flight path. */
+const AIR_PITCH_RATE = 0.8;
+
 function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): void {
   s.vel = add(s.vel, [0, 0, -G * h]);
   s.pos = add(s.pos, scale(s.vel, h));
-  s.angVel = scale(s.angVel, 1 - 0.3 * h);
-  s.quat = quatIntegrate(s.quat, s.angVel, h);
   s.slip = 0;
+  // Attitude in the air: the nose slowly follows the flight path (only about the car's lateral
+  // axis), so jumps land along their arc instead of flat or tumbling.
+  {
+    const f = quatRotate(s.quat, [0, 1, 0]);
+    const r = quatRotate(s.quat, [1, 0, 0]);
+    const vdir = normalize(sub(s.vel, scale(r, dot(s.vel, r))));
+    if (length(vdir) > 0.5 && dot(vdir, f) > 0.2) {
+      const axis = cross(f, vdir); // rotation that takes f toward vdir
+      const sinA = length(axis);
+      const rate = Math.min(AIR_PITCH_RATE, sinA / h);
+      s.angVel = sinA > 1e-6 ? scale(axis, rate / sinA) : [0, 0, 0];
+    } else s.angVel = [0, 0, 0];
+  }
+  s.quat = quatIntegrate(s.quat, s.angVel, h);
 
   const up = quatRotate(s.quat, [0, 0, 1]);
   const fwd = quatRotate(s.quat, [0, 1, 0]);
@@ -328,8 +358,8 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
   const n = p.n;
   const closing = -dot(s.vel, n);
   const tilt = dot(up, n);
-  if (tilt < 0.55) crash(s, 'landed badly');
-  else if (closing > 25) crash(s, 'hard landing');
+  if (tilt < 0.35) crash(s, 'landed badly');
+  else if (closing > 32) crash(s, 'hard landing');
 
   const gap = p.hit.t - RAY_UP - spec.rideHeight;
   s.pos = add(s.pos, scale(usedUp, -gap));

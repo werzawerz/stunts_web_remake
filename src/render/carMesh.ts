@@ -47,7 +47,9 @@ function wheel(mb: MeshBuilder, x: number, y: number, z: number, r: number, widt
 
 export function createCarMesh(spec: CarSpec = DEFAULT_CAR, body = 0xd81c1c): THREE.Group {
   const mb = new MeshBuilder();
-  const g = -spec.rideHeight; // road level in body space
+  // Authored at real-car size, then scaled up: the original's cars are about 1/6 of a road wide.
+  const S = 1.25;
+  const g = -spec.rideHeight / S; // road level in body space
   const glass = 0x1c3048;
   const dark = 0x242424;
 
@@ -83,12 +85,14 @@ export function createCarMesh(spec: CarSpec = DEFAULT_CAR, body = 0xd81c1c): THR
   const wr = 0.33;
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
-      wheel(mb, sx * (0.93 - 0.12), (sy * spec.wheelbase) / 2, g + wr, wr, 0.26, sx);
+      wheel(mb, sx * (spec.halfTrack / S + 0.01), (sy * spec.wheelbase) / 2 / S, g + wr, wr, 0.26, sx);
     }
   }
 
   const group = new THREE.Group();
-  group.add(mb.build());
+  const mesh = mb.build();
+  mesh.scale.setScalar(S);
+  group.add(mesh);
   return group;
 }
 

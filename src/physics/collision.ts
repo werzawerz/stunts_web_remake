@@ -10,6 +10,8 @@ export interface Hit {
   /** Unit surface normal, facing the ray origin. */
   n: Vec3;
   surface: SurfaceId;
+  /** Road direction for guided pieces (loops): the car is steered along it. */
+  guide?: Vec3;
 }
 
 const CELL = 20;
@@ -25,11 +27,16 @@ export class CollisionWorld {
   private readonly stamp: Int32Array;
   private query = 0;
   private readonly water = new Set<number>();
+  private waterTile = CELL;
 
-  /** positions: 9 numbers per triangle; surfaces: one id per triangle. */
+  /**
+   * positions: 9 numbers per triangle; surfaces: one id per triangle; guides: optional 3 numbers
+   * per triangle (all zero = not guided).
+   */
   constructor(
     private readonly positions: number[],
     private readonly surfaces: number[],
+    private readonly guides: number[] = [],
   ) {
     const count = surfaces.length;
     this.stamp = new Int32Array(count);
@@ -53,13 +60,14 @@ export class CollisionWorld {
     }
   }
 
-  /** Mark a 20 m grid tile (x east, z north) as water. */
-  addWater(x: number, z: number): void {
+  /** Mark track tile (x east, z north) of size `tile` metres as water. */
+  addWater(x: number, z: number, tile: number): void {
+    this.waterTile = tile;
     this.water.add(key(x, z));
   }
 
   isWater(e: number, n: number): boolean {
-    return this.water.has(key(Math.floor(e / CELL), Math.floor(n / CELL)));
+    return this.water.has(key(Math.floor(e / this.waterTile), Math.floor(n / this.waterTile)));
   }
 
   /**
@@ -116,7 +124,12 @@ export class CollisionWorld {
           if (dist < 0 || dist > maxT) continue;
           let n = normalize(cross(e1, e2));
           if (dot(n, d) > 0) n = [-n[0], -n[1], -n[2]];
-          consider({ t: dist, n, surface: this.surfaces[t]! as SurfaceId });
+          const hit: Hit = { t: dist, n, surface: this.surfaces[t]! as SurfaceId };
+          const gx = this.guides[t * 3] ?? 0;
+          const gy = this.guides[t * 3 + 1] ?? 0;
+          const gz = this.guides[t * 3 + 2] ?? 0;
+          if (gx !== 0 || gy !== 0 || gz !== 0) hit.guide = [gx, gy, gz];
+          consider(hit);
         }
       }
     }

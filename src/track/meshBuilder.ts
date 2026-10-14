@@ -30,12 +30,16 @@ export class MeshBuilder {
   /** Driveable triangles in sim space (9 numbers each) and their surface ids, for CollisionWorld. */
   readonly solidPositions: number[] = [];
   readonly solidSurfaces: number[] = [];
+  readonly solidGuides: number[] = [];
 
   /** @param shaded false for surfaces that should keep their exact colour (ground, sky, markings). */
   constructor(private readonly shaded = true) {}
 
-  /** `solid`: surface id (see physics/collision SURFACE) if cars may drive on this triangle. */
-  tri(a: V3, b: V3, c: V3, color: number, solid?: number): void {
+  /**
+   * `solid`: surface id (see physics/collision SURFACE) if cars may drive on this triangle.
+   * `guide`: road direction for pieces that steer the car themselves (loops).
+   */
+  tri(a: V3, b: V3, c: V3, color: number, solid?: number, guide?: V3): void {
     const k = this.shaded ? faceShade(a, b, c) : 1;
     const r = vgaQuantize((((color >> 16) & 255) / 255) * k);
     const g = vgaQuantize((((color >> 8) & 255) / 255) * k);
@@ -48,12 +52,13 @@ export class MeshBuilder {
     if (solid !== undefined) {
       this.solidPositions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
       this.solidSurfaces.push(solid);
+      this.solidGuides.push(guide?.[0] ?? 0, guide?.[1] ?? 0, guide?.[2] ?? 0);
     }
   }
 
-  quad(a: V3, b: V3, c: V3, d: V3, color: number, solid?: number): void {
-    this.tri(a, b, c, color, solid);
-    this.tri(a, c, d, color, solid);
+  quad(a: V3, b: V3, c: V3, d: V3, color: number, solid?: number, guide?: V3): void {
+    this.tri(a, b, c, color, solid, guide);
+    this.tri(a, c, d, color, solid, guide);
   }
 
   /** Convex polygon (fan triangulated). */
