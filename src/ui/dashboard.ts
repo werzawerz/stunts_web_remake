@@ -1,7 +1,9 @@
+import type { Cockpit, Sprite } from '../original/cockpit';
+
 /*
- * 320x200 overlay drawn with Canvas 2D and upscaled with crisp pixels, like the original's
- * in-car view: dashboard panel, rev counter and speedometer inside the steering wheel rim,
- * race clock at the top. Our own artwork, laid out after the original's arrangement.
+ * 320x200 overlay drawn with Canvas 2D: the race clock and messages, and the in-car view. When the
+ * original Stunts files are available each car gets its own original cockpit (see
+ * src/original/cockpit.ts); otherwise a generic dashboard of our own, laid out like the original.
  */
 
 export const SCREEN_W = 320;
@@ -32,6 +34,8 @@ export class Dashboard {
 
   /** Backing-store pixels per 320x200 "screen" pixel: 1 = authentic chunky, higher = smooth. */
   private scale = 1;
+  /** Original cockpit of the current car, if the Stunts files are available. */
+  original: Cockpit | null = null;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -52,10 +56,12 @@ export class Dashboard {
     c.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     c.clearRect(0, 0, SCREEN_W, SCREEN_H);
     c.imageSmoothingEnabled = false;
-    if (s.view === 'cockpit') this.cockpit(s);
+    const original = s.view === 'cockpit' && this.original !== null;
+    if (original) this.originalCockpit(s, this.original!);
+    else if (s.view === 'cockpit') this.cockpit(s);
     else if (s.view === 'chase') this.mini(s);
 
-    if (s.view !== 'free') this.text(formatTime(s.timeSec), SCREEN_W / 2, 12, 11, '#fcfcfc', 'center');
+    if (s.view !== 'free') this.text(formatTime(s.timeSec), SCREEN_W / 2, original ? 22 : 12, 11, '#fcfcfc', 'center');
     if (s.crashed) {
       this.text('CRASHED!', SCREEN_W / 2, 70, 20, '#fc2020', 'center');
       this.text(s.crashReason.toUpperCase(), SCREEN_W / 2, 88, 9, '#fcfcfc', 'center');
@@ -73,6 +79,51 @@ export class Dashboard {
     c.fillText(t, x + 1, y + 1);
     c.fillStyle = color;
     c.fillText(t, x, y);
+  }
+
+  private sprite(sp: Sprite | undefined, x = sp?.x ?? 0, y = sp?.y ?? 0): void {
+    if (sp) this.ctx.drawImage(sp.image, x, y);
+  }
+
+  /** The car's own original dashboard with live needles, steering dot and gear knob. */
+  private originalCockpit(s: HudState, k: Cockpit): void {
+    const c = this.ctx;
+    this.sprite(k.roof);
+    this.sprite(k.dash);
+    this.sprite(k.instruments);
+    const ins = k.instruments ?? { x: 0, y: 0 };
+    const drawNeedle = (n: Cockpit['speedo'], step: number): void => {
+      if (!n) return;
+      const tip = n.tips[Math.max(0, Math.min(n.tips.length - 1, Math.floor(step)))]!;
+      c.strokeStyle = '#fc3c1c';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(ins.x + n.cx + 0.5, ins.y + n.cy + 0.5);
+      c.lineTo(ins.x + tip[0] + 0.5, ins.y + tip[1] + 0.5);
+      c.stroke();
+    };
+    drawNeedle(k.speedo, s.speedKmh / 1.609344 / 2.5);
+    drawNeedle(k.revs, s.rpm / 128);
+    this.sprite(k.wheel);
+    // Steering dot on the wheel rim: right turns use the table, left turns mirror it.
+    if (k.dot && k.dotPath.length > 1) {
+      const step = Math.round(Math.abs(s.steer) * (k.dotPath.length - 1));
+      const [cx] = k.dotPath[0]!;
+      const [px, py] = k.dotPath[step]!;
+      const x = s.steer < 0 ? 2 * cx - px : px;
+      c.drawImage(k.dot.image, Math.round(x - k.dot.image.width / 2), Math.round(py - k.dot.image.height / 2));
+    }
+    if (k.gearbox) {
+      this.sprite(k.gearbox);
+      const knob = s.gear >= 1 ? k.knobs[s.gear - 1] : undefined;
+      if (k.knob && knob && (knob[0] !== 0 || knob[1] !== 0)) {
+        c.drawImage(
+          k.knob.image,
+          Math.round(k.gearbox.x + knob[0] - k.knob.image.width / 2),
+          Math.round(k.gearbox.y + knob[1] - k.knob.image.height / 2),
+        );
+      }
+    }
   }
 
   private mini(s: HudState): void {

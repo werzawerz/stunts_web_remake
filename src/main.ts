@@ -4,6 +4,7 @@ import { CARS, createCar, DT, INPUT, speedOf, stepCar, type CarSpec, type CarSta
 import type { CollisionWorld } from './physics/collision';
 import { quatRotate, type Quat, type Vec3 } from './physics/vec';
 import { loadOriginalCarModels, type CarModel } from './original/carModels';
+import { loadCockpit } from './original/cockpit';
 import { createCarMesh, createCarMeshFromModel, setObjectPose } from './render/carMesh';
 import { FlyCamera } from './render/flyCamera';
 import { createHorizon, type HorizonView } from './render/horizon';
@@ -67,6 +68,16 @@ let carObject = buildCarObject();
 scene.add(carObject);
 let carNameUntil = 0;
 
+/** Show the selected car's original cockpit once (and if) its files have loaded. */
+function updateCockpit(): void {
+  const id = spec.id;
+  dash.original = null;
+  void loadCockpit(id).then((k) => {
+    if (spec.id === id) dash.original = k;
+  });
+}
+updateCockpit();
+
 function replaceCarObject(): void {
   scene.remove(carObject);
   carObject.traverse((o) => {
@@ -92,6 +103,7 @@ function selectCar(i: number): void {
   carIndex = (i + CARS.length) % CARS.length;
   spec = CARS[carIndex]!;
   replaceCarObject();
+  updateCockpit();
   carNameUntil = performance.now() + 4000;
   resetCar();
 }
