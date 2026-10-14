@@ -112,6 +112,8 @@ export interface CarState {
   slip: number;
   crashed: boolean;
   crashReason: string;
+  /** What the car crashed into, when known (debugging and messages; not part of the hash). */
+  crashDetail?: string;
   ticks: number;
 }
 
@@ -169,6 +171,60 @@ function alongGuide(guide: Vec3, fwd: Vec3, n: Vec3): Vec3 {
   const g = dot(guide, fwd) < 0 ? scale(guide, -1) : guide;
   const p = normalize(sub(g, scale(n, dot(g, n))));
   return length(p) > 0.5 ? p : fwd;
+}
+
+/** Vertical speed (m/s) over a crest below which the car stays on the road instead of hopping. */
+const CREST_STICK = 3;
+
+/** Closing speed (m/s) above which hitting a wall or object wrecks the car (~22 km/h). */
+const WALL_CRASH_SPEED = 6;
+
+/**
+ * Sweep the car's corners from `from` to `to` against walls and objects. Returns the corrected
+ * position and velocity when something was hit (and crashes the car on a hard hit), else null.
+ */
+function hitWalls(
+  s: CarState,
+  spec: CarSpec,
+  world: CollisionWorld,
+  from: Vec3,
+  to: Vec3,
+  vel: Vec3,
+  up: Vec3,
+  fwd: Vec3,
+  right: Vec3,
+): { pos: Vec3; vel: Vec3 } | null {
+  const hw = spec.halfTrack * 1.15;
+  const hl = (spec.wheelbase / 2) * 1.45;
+  let first: { t: number; n: Vec3; tag?: string } | null = null;
+  for (const [sx, sy] of [
+    [1, 1],
+    [-1, 1],
+    [0, 1],
+    [1, -1],
+    [-1, -1],
+    [1, 0],
+    [-1, 0],
+  ] as const) {
+    const off = add(add(scale(right, sx * hw), scale(fwd, sy * hl)), scale(up, 0.2));
+    const hit = world.sweep(add(from, off), add(to, off));
+    if (hit && (!first || hit.t < first.t)) first = hit;
+  }
+  if (!first) return null;
+  // Push back along the wall's horizontal normal.
+  let n: Vec3 = [first.n[0], first.n[1], 0];
+  n = length(n) > 0.2 ? normalize(n) : first.n;
+  const closing = -dot(vel, n);
+  if (closing > WALL_CRASH_SPEED) {
+    crash(s, 'hit an obstacle');
+    s.crashDetail = first.tag ?? '';
+    return { pos: from, vel: [0, 0, 0] };
+  }
+  const t = Math.max(0, first.t - 0.05);
+  const pos = add(from, scale(sub(to, from), t));
+  // Scrape along: lose the speed into the wall plus a bit of friction.
+  const along = sub(vel, scale(n, Math.min(0, dot(vel, n)) * 1.3));
+  return { pos, vel: scale(along, 0.85) };
 }
 
 function crash(s: CarState, reason: string): void {
@@ -285,6 +341,11 @@ function groundStep(
   // --- move and follow the surface -----------------------------------------------------------
   const qBefore = s.quat;
   let pos = add(s.pos, scale(vel, h));
+  const wall = hitWalls(s, spec, world, s.pos, pos, vel, n, fwd, right);
+  if (wall) {
+    pos = wall.pos;
+    vel = wall.vel;
+  }
   const there = probe(world, spec, pos, n, 1.0);
   const takeOff = (): void => {
     s.vel = vel;
@@ -300,8 +361,12 @@ function groundStep(
   // The road may fall away by what gravity pulls in one substep, plus a small allowance for the
   // faceted road (a couple of degrees per segment). More than that and the car takes off.
   const gIn = Math.max(0, -dot(gravity, n2));
-  const allowed = 0.5 * gIn * h * h + 0.004 + length(vel) * h * 0.035;
-  if (gap > allowed) return takeOff();
+  const allowed = 0.5 * gIn * h * h + 0.004;
+  // Crossing a crest (a hill top edge, a ramp lip, a facet joint) the car only leaves the road
+  // if it would lift off with real vertical speed; otherwise it stays planted. Without this every
+  // slow crest made a tiny hop, felt as a bump. Ramp lips at speed and road ends still launch it.
+  const liftOff = dot(vel, n2); // speed away from the new road surface
+  if (gap > allowed && (gap > 0.5 || liftOff > CREST_STICK)) return takeOff();
 
   pos = sub(pos, scale(n2, gap));
   // Turn the velocity into the new road plane, keeping its magnitude (loops keep their speed).
@@ -326,7 +391,22 @@ const AIR_PITCH_RATE = 0.8;
 
 function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): void {
   s.vel = add(s.vel, [0, 0, -G * h]);
-  s.pos = add(s.pos, scale(s.vel, h));
+  {
+    const to = add(s.pos, scale(s.vel, h));
+    const wall = hitWalls(
+      s,
+      spec,
+      world,
+      s.pos,
+      to,
+      s.vel,
+      quatRotate(s.quat, [0, 0, 1]),
+      quatRotate(s.quat, [0, 1, 0]),
+      quatRotate(s.quat, [1, 0, 0]),
+    );
+    s.pos = wall ? wall.pos : to;
+    if (wall) s.vel = wall.vel;
+  }
   s.slip = 0;
   // Attitude in the air: the nose slowly follows the flight path (only about the car's lateral
   // axis), so jumps land along their arc instead of flat or tumbling.

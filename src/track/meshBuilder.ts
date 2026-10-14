@@ -31,9 +31,32 @@ export class MeshBuilder {
   readonly solidPositions: number[] = [];
   readonly solidSurfaces: number[] = [];
   readonly solidGuides: number[] = [];
+  /** Wall triangles (9 numbers each): solid obstacles cars bump into or crash against. */
+  readonly wallPositions: number[] = [];
+  readonly wallTags: string[] = [];
+  /** Label recorded with every wall triangle added from now on. */
+  wallTag = '';
+  /** While > 0, every triangle drawn is also a wall (see `walls`). */
+  private wallDepth = 0;
 
   /** @param shaded false for surfaces that should keep their exact colour (ground, sky, markings). */
   constructor(private readonly shaded = true) {}
+
+  /** Everything drawn inside `draw` also becomes a wall. */
+  walls(draw: () => void): void {
+    this.wallDepth++;
+    try {
+      draw();
+    } finally {
+      this.wallDepth--;
+    }
+  }
+
+  /** A collision-only wall triangle (not drawn). */
+  wallTri(a: V3, b: V3, c: V3): void {
+    this.wallPositions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    this.wallTags.push(this.wallTag);
+  }
 
   /**
    * `solid`: surface id (see physics/collision SURFACE) if cars may drive on this triangle.
@@ -53,6 +76,8 @@ export class MeshBuilder {
       this.solidPositions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
       this.solidSurfaces.push(solid);
       this.solidGuides.push(guide?.[0] ?? 0, guide?.[1] ?? 0, guide?.[2] ?? 0);
+    } else if (this.wallDepth > 0) {
+      this.wallTri(a, b, c);
     }
   }
 

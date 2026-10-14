@@ -10,6 +10,8 @@ import { FlyCamera } from './render/flyCamera';
 import { createHorizon, type HorizonView } from './render/horizon';
 import { buildSampleTrack } from './track/sampleTrack';
 import { fetchOriginal } from './original/files';
+import type { Shape } from './original/formats';
+import { loadTrackShapes } from './original/trackShapes';
 import { parseTrk, type Track } from './track/trkFormat';
 import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
@@ -61,7 +63,8 @@ const input = new KeyboardInput();
 // Car choice (V cycles). Each car gets its own paint, like the original's selection screen.
 const PAINT = [0xd81c1c, 0xe8e8e8, 0xfcd820, 0xc81010, 0x205c30, 0x1c3cc8, 0xa89c74, 0xf0f0f0, 0x6c1c8c, 0x2c2c2c, 0xfc7c1c];
 const vehicleParam = new URLSearchParams(location.search).get('vehicle');
-let carIndex = Math.max(0, CARS.findIndex((c) => c.id === vehicleParam));
+// The Porsche/March Indy by default.
+let carIndex = Math.max(0, CARS.findIndex((c) => c.id === (vehicleParam ?? 'indy')));
 let spec: CarSpec = CARS[carIndex]!;
 // Original car models and names, when the player's own Stunts files are available (dev: original_game/).
 let originalModels: Record<string, CarModel> = {};
@@ -152,6 +155,8 @@ const TRACKS: TrackEntry[] = [
 let trackIndex = 0;
 let trackId = 'default';
 let currentTrack: Track = buildSampleTrack();
+// Original track piece shapes, when the player's Stunts files are available.
+let trackShapes: Map<string, Shape> | null = null;
 let route: Route | null = null;
 let lap: LapState = createLap();
 /** Input bitmask of every tick since the clock started: enough to replay or verify the lap. */
@@ -207,7 +212,7 @@ function loadScene(track: Track): void {
     scene.remove(horizonView.group);
     horizonView.dispose();
   }
-  const built = buildTrack(track);
+  const built = buildTrack(track, trackShapes);
   trackGroup = built.group;
   world = built.world;
   scene.add(trackGroup);
@@ -278,10 +283,17 @@ window.addEventListener('keydown', (e) => {
 // ?view=chase|cockpit|free    initial view · ?res=0|2|1  native, 640x400 or 320x200
 const params = new URLSearchParams(location.search);
 loadScene(currentTrack);
-const trackParam = params.get('track');
-if (trackParam) {
+void loadTrackShapes().then((shapes) => {
+  if (!shapes) return;
+  console.info(`[stunts] using ${shapes.size} original track shapes`);
+  trackShapes = shapes;
+  loadScene(currentTrack);
+});
+// The original Default track by default (falls back to the demo circuit without the game files).
+const trackParam = params.get('track') ?? 'orig-default';
+{
   const i = TRACKS.findIndex((t) => t.id === trackParam);
-  if (i >= 0) void selectTrack(i, 1, true);
+  if (i > 0) void selectTrack(i, 1, true);
 }
 const carParam = params.get('car');
 if (carParam) {

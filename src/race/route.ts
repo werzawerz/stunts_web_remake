@@ -14,6 +14,8 @@ export interface Route {
   cellIndex: Map<number, number>;
   /** Start line: centre (east, north) and driving direction. */
   line: { centre: [number, number]; dir: [number, number] };
+  /** Centre line of the whole lap in driving order (east, north, up), for drivers and opponents. */
+  line3d: [number, number, number][];
 }
 
 const cellKey = (x: number, z: number): number => x * 1000 + z;
@@ -102,11 +104,23 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
   const cellIndex = new Map<number, number>();
   ordered.forEach((p, i) => p.cells.forEach(([x, z]) => cellIndex.set(cellKey(x, z), i)));
   const [cx, cz] = start.anchor;
+  // Centre line in driving order: each piece's path, reversed when driven from its far end.
+  const line3d: [number, number, number][] = [];
+  ordered.forEach((p, i) => {
+    const d = dirs[i]!;
+    const forward = (p.ends[1][0] - p.ends[0][0]) * d[0] + (p.ends[1][1] - p.ends[0][1]) * d[1] >= 0;
+    const pts = forward ? p.path : [...p.path].reverse();
+    for (const q of pts) {
+      const last = line3d[line3d.length - 1];
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.5) line3d.push(q);
+    }
+  });
   return {
     pieces: ordered,
     dirs,
     closed,
     cellIndex,
+    line3d,
     line: { centre: [(cx + 0.5) * TILE, (cz + 0.5) * TILE], dir: sd },
   };
 }

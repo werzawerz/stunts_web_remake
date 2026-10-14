@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { HILL_HEIGHT, RAIL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE, UNIT } from './constants';
 import { CollisionWorld, SURFACE } from '../physics/collision';
 import { MeshBuilder, type V3 } from './meshBuilder';
+import materials from '../../tools/stunts/materials.json';
+import { ELEMENT_SHAPES } from '../original/elementTable.generated';
+import type { Shape } from '../original/formats';
 import { decodeTerrain, decodeTile, footprint, type Building, type Dir, type Surface, type TileInfo } from './tiles';
 import { GRID, Horizon, type Track } from './trkFormat';
 
@@ -211,8 +214,10 @@ function startGantry(mb: MeshBuilder, c: [number, number], dir: Dir): void {
   // Original banner: 264 units wide, 121 units tall.
   const side = 132 * UNIT;
   const top = 121 * UNIT;
-  boxAt(-side - 0.8, -0.8, -side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
-  boxAt(side - 0.8, -0.8, side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
+  mb.walls(() => {
+    boxAt(-side - 0.8, -0.8, -side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
+    boxAt(side - 0.8, -0.8, side + 0.8, 0.8, 0, top, GANTRY_PILLAR);
+  });
   boxAt(-side + 0.8, -0.4, side - 0.8, 0.4, top - 2.6, top, GANTRY_BANNER);
   // White pixel lettering on both faces, readable from either direction.
   for (const face of [-1, 1]) {
@@ -399,6 +404,8 @@ export interface TrackPiece {
   cells: [number, number][];
   /** Where the road leaves the element at either end, (east, north) in metres. */
   ends: [[number, number], [number, number]];
+  /** Centre line from ends[0] to ends[1] (east, north, up). */
+  path: [number, number, number][];
   kind: TileInfo['kind'];
 }
 
@@ -408,8 +415,13 @@ export interface BuiltTrack {
   pieces: TrackPiece[];
 }
 
-export function buildTrack(track: Track): BuiltTrack {
-  const mb = new MeshBuilder();
+/**
+ * Build a track. Pass the original track shapes (src/original/trackShapes.ts) to draw and drive the
+ * original pieces; without them our own geometry is used.
+ */
+export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): BuiltTrack {
+  const main = new MeshBuilder();
+  const mb = main;
   const ground = GROUND_COLOR[track.horizon];
   const hillColor = new THREE.Color(ground).multiplyScalar(0.92).getHex();
   const size = GRID * TILE;
@@ -419,6 +431,12 @@ export function buildTrack(track: Track): BuiltTrack {
   const gmb = new MeshBuilder(false);
   const big = 6000;
   gmb.quad([-big, -big, 0], [size + big, -big, 0], [size + big, size + big, 0], [-big, size + big, 0], ground);
+
+  /** Tunnels run through hills at ground level: the tunnel's axis on tile (x, z), if any. */
+  const tunnelAxis = (x: number, z: number): 'NS' | 'EW' | null => {
+    const code = track.elements[x]?.[z];
+    return code === 0x42 ? 'NS' : code === 0x43 ? 'EW' : null;
+  };
 
   // Terrain.
   const waterTiles: [number, number][] = [];
@@ -432,7 +450,23 @@ export function buildTrack(track: Track): BuiltTrack {
         waterTiles.push([x, z]);
         mb.quad([e, n, 0.06], [e + TILE, n, 0.06], [e + TILE, n + TILE, 0.06], [e, n + TILE, 0.06], WATER_COLOR);
       } else if (t.kind === 'hill') {
-        mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor, SURFACE.Grass);
+        const tunnel = tunnelAxis(x, z);
+        if (!tunnel) {
+          mb.walls(() => mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor, SURFACE.Grass));
+        } else {
+          // A tunnel runs through this hill tile: only the top and the sides along the tunnel.
+          const top = (a: V3, b: V3, c2: V3, d: V3): void => mb.quad(a, b, c2, d, hillColor, SURFACE.Grass);
+          top([e, n, HILL_HEIGHT], [e + TILE, n, HILL_HEIGHT], [e + TILE, n + TILE, HILL_HEIGHT], [e, n + TILE, HILL_HEIGHT]);
+          mb.walls(() => {
+            if (tunnel === 'NS') {
+              mb.quad([e, n, 0], [e, n + TILE, 0], [e, n + TILE, HILL_HEIGHT], [e, n, HILL_HEIGHT], hillColor);
+              mb.quad([e + TILE, n, 0], [e + TILE, n + TILE, 0], [e + TILE, n + TILE, HILL_HEIGHT], [e + TILE, n, HILL_HEIGHT], hillColor);
+            } else {
+              mb.quad([e, n, 0], [e + TILE, n, 0], [e + TILE, n, HILL_HEIGHT], [e, n, HILL_HEIGHT], hillColor);
+              mb.quad([e, n + TILE, 0], [e + TILE, n + TILE, 0], [e + TILE, n + TILE, HILL_HEIGHT], [e, n + TILE, HILL_HEIGHT], hillColor);
+            }
+          });
+        }
       } else if (t.kind === 'slope') {
         const fr = FRAME[t.ascent];
         const at = (r: number, f: number, h: number): V3 => [
@@ -442,8 +476,10 @@ export function buildTrack(track: Track): BuiltTrack {
         ];
         const h = TILE / 2;
         mb.quad(at(-h, -h, 0), at(h, -h, 0), at(h, h, HILL_HEIGHT), at(-h, h, HILL_HEIGHT), hillColor, SURFACE.Grass);
-        mb.tri(at(-h, -h, 0), at(-h, h, 0), at(-h, h, HILL_HEIGHT), hillColor);
-        mb.tri(at(h, -h, 0), at(h, h, 0), at(h, h, HILL_HEIGHT), hillColor);
+        mb.walls(() => {
+          mb.tri(at(-h, -h, 0), at(-h, h, 0), at(-h, h, HILL_HEIGHT), hillColor);
+          mb.tri(at(h, -h, 0), at(h, h, 0), at(h, h, HILL_HEIGHT), hillColor);
+        });
       } else if (t.kind === 'corner') {
         // Hill corner: tile corners at ground or hill height, split along the diagonal that keeps
         // the raised (or lowered) corner on its own triangle.
@@ -476,7 +512,7 @@ export function buildTrack(track: Track): BuiltTrack {
 
   /** Ground height under a tile: hills (terrain 06) raise everything on them to hill level. */
   const baseHeight = (x: number, z: number): number =>
-    decodeTerrain(track.terrain[x]?.[z] ?? 0).kind === 'hill' ? HILL_HEIGHT : 0;
+    decodeTerrain(track.terrain[x]?.[z] ?? 0).kind === 'hill' && !tunnelAxis(x, z) ? HILL_HEIGHT : 0;
   /** Heights at the two ends of a straight on a tile, following a hill slope along its axis. */
   const slopeEnds = (x: number, z: number, dir: Dir): [number, number] => {
     const t = decodeTerrain(track.terrain[x]?.[z] ?? 0);
@@ -488,22 +524,63 @@ export function buildTrack(track: Track): BuiltTrack {
     return [b, b];
   };
 
-  // Track elements.
+  /**
+   * Ground height function for the element anchored on tile (x, z): constant on flat ground and
+   * hills; on a slope tile the original shears the element along the slope (a road follows it, and
+   * a ramp built against the slope becomes a level road at hill height).
+   */
+  const groundAt = (x: number, z: number): ((e: number, n: number) => number) => {
+    const t = decodeTerrain(track.terrain[x]?.[z] ?? 0);
+    if (t.kind !== 'slope') {
+      const b = baseHeight(x, z);
+      return () => b;
+    }
+    const e0 = x * TILE;
+    const n0 = z * TILE;
+    const clamp = (v: number): number => Math.min(1, Math.max(0, v));
+    const frac: Record<Dir, (e: number, n: number) => number> = {
+      N: (_e, n) => (n - n0) / TILE,
+      S: (_e, n) => (n0 + TILE - n) / TILE,
+      E: (e) => (e - e0) / TILE,
+      W: (e) => (e0 + TILE - e) / TILE,
+    };
+    const f = frac[t.ascent];
+    return (e, n) => HILL_HEIGHT * clamp(f(e, n));
+  };
+
+  // Track elements. With the original shapes, each element is drawn from its original 3D shape
+  // and cars drive on its road polygons and bump into its walls; our own geometry is then built
+  // off-screen only for the route (and for the loop's guided surface). Without them, our own
+  // geometry is drawn and used for everything.
+  const omb = new MeshBuilder(false); // original shapes (pre-shaded, so no extra shading)
+  const keep = new MeshBuilder(); // off-screen; its driveable triangles are kept
+  const scrap = new MeshBuilder(); // off-screen; thrown away
   const pieces: TrackPiece[] = [];
   for (let x = 0; x < GRID; x++) {
     for (let z = 0; z < GRID; z++) {
-      const info = decodeTile(track.elements[x]![z]!);
+      const code = track.elements[x]![z]!;
+      const info = decodeTile(code);
       if (info.kind === 'blank' || info.kind === 'filler' || info.kind === 'unknown') continue;
       const fp = footprint(info);
       // Centre of the footprint (it extends east and south from the anchor tile).
       const c: [number, number] = [(x + fp.w / 2) * TILE, (z + 1 - fp.h / 2) * TILE];
+      const dashes = shapes ? drawOriginalElement(omb, shapes, code, c, groundAt(x, z)) : null;
+      const original = dashes !== null;
+      const firstPiece = pieces.length;
+      const mb = original ? (info.kind === 'loop' ? keep : scrap) : main;
       const road = (path: Path, surface: Surface, guided = false): Path => {
         paintRoad(mb, path, surface, guided);
         const a = path.pts[0]!;
         const b = path.pts[path.pts.length - 1]!;
         const cells: [number, number][] = [];
         for (let i = 0; i < fp.w; i++) for (let j = 0; j < fp.h; j++) cells.push([x + i, z - j]);
-        pieces.push({ anchor: [x, z], cells, ends: [[a[0], a[1]], [b[0], b[1]]], kind: info.kind });
+        pieces.push({
+          anchor: [x, z],
+          cells,
+          ends: [[a[0], a[1]], [b[0], b[1]]],
+          path: path.pts.map((q): [number, number, number] => [q[0], q[1], q[2]]),
+          kind: info.kind,
+        });
         return path;
       };
       const h = baseHeight(x, z);
@@ -542,29 +619,35 @@ export function buildTrack(track: Track): BuiltTrack {
         }
         case 'elevatedRoad': {
           const p = road(straightPath(c, along(info.axis), HILL_HEIGHT), 'paved');
-          skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.solid === true);
-          rails(mb, p, CONCRETE);
-          if (!info.span) pillar(mb, c[0], c[1], HILL_HEIGHT);
+          mb.walls(() => {
+            skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.solid === true);
+            rails(mb, p, CONCRETE);
+            if (!info.span) pillar(mb, c[0], c[1], HILL_HEIGHT);
+          });
           // "Span over road": a ground road crosses underneath.
           if (info.span === 'overRoad') road(straight(info.axis === 'NS' ? 'E' : 'N'), 'paved');
           break;
         }
         case 'elevatedCorner': {
           const p = road(cornerPath([x, z], { size: 'large', edges: info.edges }, HILL_HEIGHT), 'paved');
-          skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, false);
-          rails(mb, p, CONCRETE);
-          const mid = p.pts[Math.floor(p.pts.length / 2)]!;
-          pillar(mb, mid[0], mid[1], HILL_HEIGHT);
+          mb.walls(() => {
+            skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, false);
+            rails(mb, p, CONCRETE);
+            const mid = p.pts[Math.floor(p.pts.length / 2)]!;
+            pillar(mb, mid[0], mid[1], HILL_HEIGHT);
+          });
           break;
         }
         case 'ramp': {
           const p = road(straightPath(c, info.dir, h, HILL_HEIGHT + h), 'paved');
-          skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.style === 'solid');
-          rails(mb, p, CONCRETE);
-          if (info.style !== 'solid') {
-            const fr = FRAME[info.dir];
-            pillar(mb, c[0] + fr.f[0] * TILE * 0.25, c[1] + fr.f[1] * TILE * 0.25, HILL_HEIGHT * 0.75);
-          }
+          mb.walls(() => {
+            skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.style === 'solid');
+            rails(mb, p, CONCRETE);
+            if (info.style !== 'solid') {
+              const fr = FRAME[info.dir];
+              pillar(mb, c[0] + fr.f[0] * TILE * 0.25, c[1] + fr.f[1] * TILE * 0.25, HILL_HEIGHT * 0.75);
+            }
+          });
           break;
         }
         case 'loop':
@@ -589,12 +672,33 @@ export function buildTrack(track: Track): BuiltTrack {
           break;
         }
         case 'scenery':
-          addScenery(mb, c[0], c[1], info.type);
+          mb.walls(() => addScenery(mb, c[0], c[1], info.type));
           break;
         case 'building':
-          addBuilding(mb, c[0], c[1], info.type, info.facing);
+          mb.walls(() => addBuilding(mb, c[0], c[1], info.type, info.facing));
           break;
       }
+      // Original pieces: follow the original road, using its centre-line dashes (our own path can
+      // be off, e.g. on banks). The end points stay ours so the route still connects.
+      if (dashes && info.kind !== 'loop') followDashes(pieces.slice(firstPiece), dashes);
+    }
+  }
+
+  // The field is fenced in, as in the original: you can't drive off the 30x30 grid.
+  for (let i = 0; i < GRID; i++) {
+    const sides: [number, number, number][] = [
+      [i, GRID - 1, 0], // north edge
+      [GRID - 1, i, 1], // east edge
+      [i, 0, 2], // south edge
+      [0, i, 3], // west edge
+    ];
+    for (const [x, z, rot] of sides) {
+      const c: [number, number] = [(x + 0.5) * TILE, (z + 0.5) * TILE];
+      if (shapes && drawShape(omb, shapes, 'fenc', 0, rot, c, groundAt(x, z), true)) continue;
+      const fr = FRAME[(['N', 'E', 'S', 'W'] as const)[rot]!];
+      const at = (r: number, f: number, up: number): V3 => [c[0] + r * fr.r[0] + f * fr.f[0], c[1] + r * fr.r[1] + f * fr.f[1], up];
+      const h = TILE / 2;
+      main.walls(() => main.quad(at(-h, h, 0), at(h, h, 0), at(h, h, 2.5), at(-h, h, 2.5), 0x9c9c9c));
     }
   }
 
@@ -604,8 +708,182 @@ export function buildTrack(track: Track): BuiltTrack {
   gm.polygonOffset = true;
   gm.polygonOffsetFactor = 2;
   gm.polygonOffsetUnits = 4;
-  group.add(groundMesh, mb.build());
-  const world = new CollisionWorld(mb.solidPositions, mb.solidSurfaces, mb.solidGuides);
+  group.add(groundMesh, main.build());
+  if (shapes) {
+    // Track pieces sit 5 cm above the terrain they lie on (hill tops, ground); pull them towards
+    // the camera in the depth test so they always win, whatever the depth buffer's precision.
+    const originals = omb.build();
+    const om = originals.material as THREE.MeshBasicMaterial;
+    om.polygonOffset = true;
+    om.polygonOffsetFactor = -1;
+    om.polygonOffsetUnits = -4;
+    group.add(originals);
+  }
+  const world = new CollisionWorld(
+    [...main.solidPositions, ...keep.solidPositions, ...omb.solidPositions],
+    [...main.solidSurfaces, ...keep.solidSurfaces, ...omb.solidSurfaces],
+    [...main.solidGuides, ...keep.solidGuides, ...omb.solidGuides],
+    [...main.wallPositions, ...keep.wallPositions, ...omb.wallPositions],
+    [...main.wallTags, ...keep.wallTags, ...omb.wallTags],
+  );
+  void scrap;
   for (const [x, z] of waterTiles) world.addWater(x, z, TILE);
   return { group, world, pieces };
+}
+
+// ---- original shapes -------------------------------------------------------------------------
+
+const COLORS: string[] = (materials as { colors: string[] }).colors;
+/** Materials of road surfaces and their markings (asphalt greys, yellow and white lines). */
+const ROAD_MATERIALS = new Set([18, 19, 20, 21, 22, 23, 24]);
+/** Shapes whose steep road surfaces are still driven on (pipes, corkscrews). */
+const CURVED = new Set(['pipe', 'pip2', 'hpip', 'spip', 'vcor', 'lco0', 'lco1', 'rco0', 'rco1']);
+/** Pieces the car rides around: their other polygons are the road's own underside, not walls. */
+const NO_WALLS = new Set(['pipe', 'pip2', 'spip', 'vcor', 'lco0', 'lco1', 'rco0', 'rco1']);
+/** Shapes driven on our own guided surface instead of their polygons. */
+const OWN_PHYSICS = new Set(['loop', 'loo1']);
+const PAINT_SURFACE = [SURFACE.Paved, SURFACE.Dirt, SURFACE.Ice];
+
+/**
+ * Draw one original shape centred on `c` (east, north) at ground height `h`, rotated by `rot`
+ * clockwise quarter turns, and add its road polygons and walls to the collision geometry.
+ * Returns false when the shape isn't available.
+ */
+function drawShape(
+  mb: MeshBuilder,
+  shapes: Map<string, Shape>,
+  name: string,
+  paint: number,
+  rot: number,
+  c: [number, number],
+  ground: (e: number, n: number) => number,
+  physics: boolean,
+  dashes?: V3[],
+): boolean {
+  const s = shapes.get(name);
+  if (!s) return false;
+  mb.wallTag = `${name}@${Math.floor(c[0] / TILE)},${Math.floor(c[1] / TILE)}`;
+  // Clockwise quarter turns seen from above: (east, north) -> (e cos + n sin, -e sin + n cos).
+  const cos = [1, 0, -1, 0][rot & 3]!;
+  const sin = [0, 1, 0, -1][rot & 3]!;
+  const tr = (i: number, lift: number): V3 => {
+    const [x, y, z] = s.verts[i]!;
+    const e = x * UNIT;
+    const n = z * UNIT;
+    const we = c[0] + e * cos + n * sin;
+    const wn = c[1] - e * sin + n * cos;
+    // Lift slightly off the ground plane so roads never z-fight with it or let it win ray ties.
+    return [we, wn, ground(we, wn) + y * UNIT + 0.05 + lift];
+  };
+  for (const prim of s.prims) {
+    const color = parseInt((COLORS[prim.materials[paint] ?? prim.materials[0]!] ?? '#ff00ff').slice(1), 16);
+    if (prim.type >= 3 && prim.type <= 10) {
+      // Markings carry the z-bias flag in the original; lift them a touch above the road.
+      const pts = prim.idx.map((i) => tr(i, prim.flags & 2 ? 0.04 : 0));
+      mb.poly(pts, color);
+      // Yellow centre-line dashes mark the middle of the original road.
+      if (dashes && (prim.materials[0] === 21 || prim.materials[0] === 24)) {
+        const k = 1 / pts.length;
+        dashes.push([
+          pts.reduce((a, q) => a + q[0], 0) * k,
+          pts.reduce((a, q) => a + q[1], 0) * k,
+          pts.reduce((a, q) => a + q[2], 0) * k,
+        ]);
+      }
+      // Markings (z-biased in the original) are paint, not part of the driving surface: as solid
+      // polygons 4 cm proud of the asphalt they made the car hop over every dash.
+      if (!physics || OWN_PHYSICS.has(name) || prim.flags & 2) continue;
+      const [a, b, d] = [pts[0]!, pts[1]!, pts[2]!];
+      const u: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v: V3 = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+      const nx = u[1] * v[2] - u[2] * v[1];
+      const ny = u[2] * v[0] - u[0] * v[2];
+      const nz = u[0] * v[1] - u[1] * v[0];
+      const up = Math.abs(nz) / (Math.hypot(nx, ny, nz) || 1);
+      const roadMaterial = ROAD_MATERIALS.has(prim.materials[0]!);
+      for (let k = 1; k < pts.length - 1; k++) {
+        if (roadMaterial && (up >= 0.5 || CURVED.has(name))) {
+          mb.solidPositions.push(...pts[0]!, ...pts[k]!, ...pts[k + 1]!);
+          mb.solidSurfaces.push(PAINT_SURFACE[paint] ?? SURFACE.Paved);
+          mb.solidGuides.push(0, 0, 0);
+        } else if (up < 0.6 && !NO_WALLS.has(name)) {
+          mb.wallTri(pts[0]!, pts[k]!, pts[k + 1]!);
+        }
+      }
+    } else if (prim.type === 11) {
+      // Sphere (tree tops and similar): a small faceted ball.
+      const cen = tr(prim.idx[0]!, 0);
+      const edge = tr(prim.idx[1]!, 0);
+      const r = Math.hypot(edge[0] - cen[0], edge[1] - cen[1], edge[2] - cen[2]) * (2 / 3);
+      const p = (dx: number, dy: number, dz: number): V3 => [cen[0] + dx * r, cen[1] + dy * r, cen[2] + dz * r];
+      const ring = [p(1, 0, 0), p(0, 1, 0), p(-1, 0, 0), p(0, -1, 0)];
+      for (let k = 0; k < 4; k++) {
+        mb.tri(ring[k]!, ring[(k + 1) % 4]!, p(0, 0, 1), color);
+        mb.tri(ring[(k + 1) % 4]!, ring[k]!, p(0, 0, -1), color);
+      }
+    }
+  }
+  return true;
+}
+
+/** Shortest 2D distance from p to a polyline, and the arc length where it is closest. */
+function nearestOnPath(path: [number, number, number][], p: V3): { dist: number; at: number } {
+  let best = { dist: Infinity, at: 0 };
+  let run = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i]!;
+    const b = path[i + 1]!;
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.min(1, Math.max(0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2)) : 0;
+    const d = Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]);
+    if (d < best.dist) best = { dist: d, at: run + Math.sqrt(len2) * t };
+    run += Math.sqrt(len2);
+  }
+  return best;
+}
+
+/** Re-route the pieces of one element through the original centre-line dashes nearest to each. */
+function followDashes(elementPieces: TrackPiece[], dashes: V3[]): void {
+  const assigned = new Map<TrackPiece, { at: number; p: V3 }[]>();
+  for (const d of dashes) {
+    let best: { piece: TrackPiece; dist: number; at: number } | null = null;
+    for (const piece of elementPieces) {
+      const near = nearestOnPath(piece.path, d);
+      if (!best || near.dist < best.dist) best = { piece, ...near };
+    }
+    if (best && best.dist < 12) {
+      const list = assigned.get(best.piece) ?? [];
+      list.push({ at: best.at, p: d });
+      assigned.set(best.piece, list);
+    }
+  }
+  for (const [piece, list] of assigned) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.at - b.at);
+    const first = piece.path[0]!;
+    const last = piece.path[piece.path.length - 1]!;
+    piece.path = [first, ...list.map((q): [number, number, number] => [q.p[0], q.p[1], q.p[2]]), last];
+  }
+}
+
+/**
+ * Draw a track element (and its overlay element) from the original shapes. Returns the centres of
+ * its yellow centre-line dashes (empty if it has none), or null when the shape isn't available.
+ */
+function drawOriginalElement(
+  mb: MeshBuilder,
+  shapes: Map<string, Shape>,
+  code: number,
+  c: [number, number],
+  ground: (e: number, n: number) => number,
+): V3[] | null {
+  const el = ELEMENT_SHAPES[code];
+  if (!el?.shape || !shapes.has(el.shape)) return null;
+  const dashes: V3[] = [];
+  drawShape(mb, shapes, el.shape, el.paint, el.rot, c, ground, true, dashes);
+  const over = el.overlay ? ELEMENT_SHAPES[el.overlay] : undefined;
+  if (over?.shape && el.overlay !== code) drawShape(mb, shapes, over.shape, over.paint, over.rot, c, ground, true, dashes);
+  return dashes;
 }

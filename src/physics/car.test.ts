@@ -152,3 +152,33 @@ describe('Stunts-style car model', () => {
     expect(s.crashReason).toBe('splash');
   });
 });
+
+describe('walls and obstacles', () => {
+  // A paved slab with a 3 m high wall across the road 40 m ahead (north).
+  const S2 = 500;
+  const wallAt = 40;
+  const slabWithWall = new CollisionWorld(
+    [-S2, -S2, 0.01, S2, -S2, 0.01, S2, S2, 0.01, -S2, -S2, 0.01, S2, S2, 0.01, -S2, S2, 0.01],
+    [0, 0],
+    [],
+    [-20, wallAt, 0, 20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 3],
+  );
+
+  it('crashes when hitting a wall fast', () => {
+    const { s } = run(slabWithWall, [0, 0, 0.61], 'N', 25, 60 * 4, INPUT.Throttle);
+    expect(s.crashed).toBe(true);
+    expect(s.crashReason).toBe('hit an obstacle');
+    expect(s.pos[1]).toBeLessThan(wallAt);
+  });
+
+  it('just stops against a wall when touching it slowly', () => {
+    const { s } = run(slabWithWall, [0, wallAt - 8, 0.61], 'N', 3, 60 * 4, 0);
+    expect(s.crashed).toBe(false);
+    expect(s.pos[1]).toBeLessThan(wallAt);
+  });
+
+  it('cannot pass through a wall even at very high speed', () => {
+    const { s } = run(slabWithWall, [0, 0, 0.61], 'N', 90, 60 * 2, INPUT.Throttle);
+    expect(s.pos[1]).toBeLessThan(wallAt);
+  });
+});
