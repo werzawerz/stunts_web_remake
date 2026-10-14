@@ -30,6 +30,9 @@ export class Dashboard {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
 
+  /** Backing-store pixels per 320x200 "screen" pixel: 1 = authentic chunky, higher = smooth. */
+  private scale = 1;
+
   constructor() {
     this.canvas = document.createElement('canvas');
     this.canvas.width = SCREEN_W;
@@ -37,8 +40,16 @@ export class Dashboard {
     this.ctx = this.canvas.getContext('2d')!;
   }
 
+  /** Layout stays in 320x200 coordinates; only the canvas resolution changes. */
+  setScale(scale: number): void {
+    this.scale = Math.max(1, Math.round(scale));
+    this.canvas.width = SCREEN_W * this.scale;
+    this.canvas.height = SCREEN_H * this.scale;
+  }
+
   draw(s: HudState): void {
     const c = this.ctx;
+    c.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     c.clearRect(0, 0, SCREEN_W, SCREEN_H);
     c.imageSmoothingEnabled = false;
     if (s.view === 'cockpit') this.cockpit(s);

@@ -86,7 +86,7 @@ Rebuilt after user feedback that the rigid-body/suspension version "did not feel
 - Debug URLs: `?car=e,n,u,H,speed` spawn the car, `?cam=...` free camera, `?view=chase|cockpit|free`, `?sharp` full resolution.
 
 ## Look (matches screenshots of the original)
-- 3D renders into a **640×400** back buffer by default (P cycles 320×200 / native), CSS-scaled with `image-rendering: pixelated`. The dashboard overlay is always drawn at 320×200.
+- Default: **native resolution, antialiased**, dashboard canvas scaled up to match (layout code stays in 320×200 coordinates via `Dashboard.setScale`). The user found 320×200 and 640×400 too pixelated; P still cycles to those retro modes (crisp `image-rendering: pixelated`).
 - Unlit `MeshBasicMaterial`; shading is baked per face in `MeshBuilder` (a few discrete shades) and every colour is snapped to VGA 6-bit steps (`vgaQuantize`).
 - Flat ground (one seamless quad: a tiled ground cracks open at 320×200), flat cyan sky, far hills + dark tree-line band + flat clouds (`render/horizon.ts`).
 - Roads: grey asphalt with a yellow dashed centre line, no edge lines. Start gantry: two beige pillars and a red banner with pixel lettering.

@@ -17,25 +17,30 @@ const frame = document.createElement('div');
 frame.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#000';
 document.body.appendChild(frame);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
-renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
 frame.appendChild(renderer.domElement);
 const dash = new Dashboard();
-dash.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated';
+dash.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
 frame.appendChild(dash.canvas);
 
-// P cycles the 3D resolution: 640x400 (default: VGA proportions, less blocky), 320x200 (exactly the
-// original), native. The dashboard always stays at 320x200 like the original's artwork.
-const RES_MODES = [2, 1, 0] as const; // multiples of 320x200; 0 = native
-let resMode = Number(new URLSearchParams(location.search).get('res') ?? 2);
+// P cycles the resolution: native and smooth (default), 640x400 or 320x200 like the original.
+const RES_MODES = [0, 2, 1] as const; // 0 = native (smooth); otherwise multiples of 320x200 (retro)
+let resMode = Number(new URLSearchParams(location.search).get('res') ?? 0);
 function layout(): void {
   const scale = Math.min(window.innerWidth / SCREEN_W, window.innerHeight / SCREEN_H);
   const w = Math.floor(SCREEN_W * scale);
   const h = Math.floor(SCREEN_H * scale);
   frame.style.width = `${w}px`;
   frame.style.height = `${h}px`;
-  renderer.setPixelRatio(resMode === 0 ? Math.min(window.devicePixelRatio, 2) : 1);
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  renderer.setPixelRatio(resMode === 0 ? dpr : 1);
   renderer.setSize(resMode === 0 ? w : SCREEN_W * resMode, resMode === 0 ? h : SCREEN_H * resMode, false);
+  // Retro modes keep crisp big pixels; native mode draws everything smooth at full resolution.
+  const pixelated = resMode === 0 ? 'auto' : 'pixelated';
+  renderer.domElement.style.imageRendering = pixelated;
+  dash.canvas.style.imageRendering = pixelated;
+  dash.setScale(resMode === 0 ? scale * dpr : 1);
 }
 layout();
 window.addEventListener('resize', layout);
@@ -125,7 +130,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---- debug params ---------------------------------------------------------------------------
 // ?cam=x,y,z,yawDeg,pitchDeg  free camera pose (render space) · ?car=e,n,u,H,speed  spawn the car
-// ?view=chase|cockpit|free    initial view · ?res=1|2|0  320x200, 640x400 or native
+// ?view=chase|cockpit|free    initial view · ?res=0|2|1  native, 640x400 or 320x200
 const params = new URLSearchParams(location.search);
 loadScene(horizon);
 const carParam = params.get('car');
