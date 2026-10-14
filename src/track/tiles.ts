@@ -13,7 +13,14 @@ export type TileInfo =
   | { kind: 'elevatedRoad'; axis: 'NS' | 'EW' }
   | { kind: 'ramp'; style: 'solid' | 'elevated'; dir: Dir } // dir = direction of ascent
   | { kind: 'loop'; axis: 'NS' | 'EW' }
-  | { kind: 'corner'; surface: Surface; size: 'sharp' | 'large'; edges: [Dir, Dir] };
+  | { kind: 'corner'; surface: Surface; size: 'sharp' | 'large'; edges: [Dir, Dir] }
+  | { kind: 'scenery'; type: 'palm' | 'cactus' | 'pine' };
+
+export type Terrain =
+  | { kind: 'flat' }
+  | { kind: 'water' }
+  | { kind: 'hill' }
+  | { kind: 'slope'; ascent: Dir };
 
 export const FILLER_CODES = [0xfd, 0xfe, 0xff] as const;
 
@@ -66,6 +73,18 @@ const corners: [number, Surface, 'sharp' | 'large'][] = [
 ];
 for (const [base, surface, size] of corners) {
   add4([base, base + 1, base + 2, base + 3], (i) => ({ kind: 'corner', surface, size, edges: CORNER_EDGES[i]! }));
+}
+
+table.set(0x97, { kind: 'scenery', type: 'palm' });
+table.set(0x98, { kind: 'scenery', type: 'cactus' });
+table.set(0x99, { kind: 'scenery', type: 'pine' });
+
+/** Terrain grid codes. Coasts and angled slopes fall back to flat until those pieces are built. */
+export function decodeTerrain(code: number): Terrain {
+  if (code === 0x01) return { kind: 'water' };
+  if (code === 0x06) return { kind: 'hill' };
+  if (code >= 0x07 && code <= 0x0a) return { kind: 'slope', ascent: TRAVEL[code - 0x07]! };
+  return { kind: 'flat' };
 }
 
 export function decodeTile(code: number): TileInfo {

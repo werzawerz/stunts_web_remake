@@ -1,0 +1,37 @@
+import { describe, expect, it } from 'vitest';
+import { buildSampleTrack } from './sampleTrack';
+import { buildTrack } from './trackBuilder';
+import { decodeTile } from './tiles';
+import { GRID, Horizon, parseTrk, serializeTrk } from './trkFormat';
+
+describe('sample track', () => {
+  it('has exactly one start line and only known tiles', () => {
+    const t = buildSampleTrack();
+    let starts = 0;
+    for (let x = 0; x < GRID; x++) {
+      for (let z = 0; z < GRID; z++) {
+        const info = decodeTile(t.elements[x]![z]!);
+        expect(info.kind).not.toBe('unknown');
+        if (info.kind === 'start') starts++;
+      }
+    }
+    expect(starts).toBe(1);
+  });
+
+  it('survives a TRK round-trip', () => {
+    const t = buildSampleTrack(Horizon.Alpine);
+    expect(parseTrk(serializeTrk(t))).toEqual(t);
+  });
+});
+
+describe('buildTrack', () => {
+  it('produces finite geometry for every horizon', () => {
+    for (const h of [Horizon.Desert, Horizon.Tropical, Horizon.Alpine, Horizon.City, Horizon.Country]) {
+      const group = buildTrack(buildSampleTrack(h));
+      const mesh = group.children[0] as import('three').Mesh;
+      const pos = mesh.geometry.getAttribute('position');
+      expect(pos.count).toBeGreaterThan(1000);
+      for (let i = 0; i < pos.array.length; i++) expect(Number.isFinite(pos.array[i])).toBe(true);
+    }
+  });
+});

@@ -95,7 +95,11 @@ Scenery: ghost player 02, ghost opponent 03, palm 97, cactus 98, pine 99, tennis
 - B6–FC are undocumented; treat as blank for gameplay.
 
 ## Our world conventions (decided by us, keep consistent)
-- Tile size `TILE = 1` world unit-tile; world metres via `TILE_METRES` constant in `src/track/constants.ts`.
-- +X = east, +Z = **north**, +Y = up. Tile (x,z) occupies [x, x+1] × [z, z+1] in tile units.
+- Constants live in `src/track/constants.ts`: `TILE` = 20 m, `ROAD_HALF_WIDTH` = 6 m, `HILL_HEIGHT` = 10 m, `SLAB` = 0.8 m.
+- Grid/sim space is (east, north, up). Tile (x,z) occupies [x·TILE,(x+1)·TILE] × [z·TILE,(z+1)·TILE].
+- **Three.js is right-handed with +Y up, so render space is (east, up, −north)**: north = −Z. `MeshBuilder` does this conversion; keep sim code in (east, north, up).
+- Multi-tile pieces extend **east and south** from the NW anchor tile (anchor (x,z) covers x..x+w−1, z−h+1..z). Fillers: FE = tile south of the anchor, FD = south-east, FF = east.
+- Corner pieces: the arc centre is the block corner lying between the two connected edges; radius 0.5 tile (sharp) or 1.5 tiles (large). A rectangular circuit's corners therefore use the edge pair on the *inside* of the bend.
 - Hill (terrain 06) height and elevated road height are the same level (`HILL_HEIGHT`), as in the original where elevated roads connect to hills.
+- Not yet built: coasts, angled slopes (rendered flat), banked/cork/pipe/tunnel/highway pieces, split corners, chicanes.
 - Physical model in the original is built from shared planes (GAME.PRE `plan` resource, normals scaled to 8192); we instead generate analytic surfaces per piece (see `stunts-project-conventions`).
