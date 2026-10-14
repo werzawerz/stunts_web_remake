@@ -22,18 +22,18 @@ with our own assets, deployed as a playable web page with online lap times.
 ## Next (in order)
 1. **Racing** — start countdown, lap timer, per-tile checkpoints (no shortcuts), results screen,
    online leaderboard via Supabase (`submitLapTime` / `getLeaderboard` already exist).
-2. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
-
-## Later
-3. **Original tracks** — load the six original `.TRK` files locally (DEFAULT, BERNIES, CHERRIS,
+2. **Original tracks** — load the six original `.TRK` files locally (DEFAULT, BERNIES, CHERRIS,
    HELENS, JOES, SKIDS); import any `.TRK` from disk.
-4. **Collisions** — solid ramp/elevated side walls, hill sides, gantry, buildings and scenery
+3. **Collisions** — solid ramp/elevated side walls, hill sides, gantry, buildings and scenery
    (crash on hard hits, like the original).
-5. **More track pieces** (measured from the original shapes): banked roads/corners, corkscrews,
+4. **More track pieces** (measured from the original shapes): banked roads/corners, corkscrews,
    pipes and half-pipes, tunnels, bridges, chicanes, split corners, slalom, highway, crossroads,
    buildings (gas station, barn, office, windmill, ship, diner), coasts and angled hill slopes.
-6. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
+5. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
    jobs each original model has); digital speed readouts in the cockpits that have them.
+6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
+
+## Later
 7. **Track editor** — 30×30 grid editor like the original; save/share tracks via Supabase.
 8. **Replays and ghosts** — the deterministic simulation already allows input-log replays.
 9. **Sound** — engine pitch from rpm, skids, crash.
