@@ -43,9 +43,20 @@ Original car parameter set (car*.res `simd` chunk, see https://wiki.stunts.hu/wi
 ## Opponents
 Original had AI opponents (Skid Vicious, Herr Otto Partz, Cherry Chassis, Bernie Rubber, Helen Wheels, Joe "Speed" Weisberg) who race the same track simultaneously. Post-MVP for us (follow tile path).
 
+## What the original looks like (from screenshots, e.g. https://www.oldgames.sk/en/game/stunts/screenshots/)
+- 320×200, 256 colours, flat-shaded polygons, no textures; distant objects simply pop in (no fog).
+- Flat green grass to the horizon, light cyan sky with a few white cloud sprites, a band of green hills and a dark tree line on the horizon.
+- Paved road: dark grey with a single **yellow dashed centre line**; very wide relative to the car.
+- Start/finish: tall pinkish-beige pillars either side carrying a red banner with white lettering.
+- Scenery: windmill (red roof, striped), white gas station with red stripe; elevated ramps look like grey columns in the distance.
+- In-car view (default): the dashboard fills the bottom ~third: black panel, blue cowl edge, round rev counter + speedometer inside a large steering wheel rim, switch rows left and right. Race clock (m:ss) at the top centre.
+- Cars: recognisable real cars (Porsche 962, Countach, Ferrari GTO...) made of a few dozen faceted polygons with 2–3 shades per colour. We use our own fictional cars.
+- Replay screen has VCR-style controls and the timer; "Wrong Way" text appears when driving backwards.
+
 ## Physics feel (target)
 - Very arcade: strong engine, cars can jump far off ramps, gentle "floaty" air time, loops are possible at moderate speed.
-- Simulation ran at a fixed low rate (~20 ticks/s in the original); we run 60 Hz fixed and keep it deterministic.
+- The original updates the car every 0.05 s (20 Hz); we run 60 Hz fixed and keep it deterministic.
+- Measured on the original: braking ~0.91 g × brake/256, constant and mass-independent; cornering ~1.2 g at grip 100h (skids from ~70 mph at that grip); top speed = sqrt(torque·ratio/drag); grass slowdown ∝ speed (~0.144/s).
 - Steering is keyboard digital with gradual wheel return; auto or manual gearbox.
 
 ## Open-source references

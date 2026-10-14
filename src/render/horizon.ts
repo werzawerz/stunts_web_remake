@@ -1,21 +1,32 @@
 import * as THREE from 'three';
+import { vgaQuantize } from '../track/meshBuilder';
 import { Horizon } from '../track/trkFormat';
 
+/*
+ * Backdrop in the original's style: a flat sky colour, a far layer (hills / mesas / mountains /
+ * skyline), a darker near band (tree line) right at the horizon, and a few flat white clouds.
+ * Everything is unlit, palette-quantised, and follows the camera so it never gets closer.
+ */
+
+type Style = 'hills' | 'mesa' | 'peaks' | 'skyline';
+
 interface Look {
-  skyTop: number;
-  skyLow: number;
-  silhouette: number;
-  style: 'mesa' | 'peaks' | 'skyline' | 'hills';
+  sky: number;
+  far: number;
+  farAlt: number;
+  near: number;
+  style: Style;
   maxHeight: number;
+  snow?: number;
 }
 
 const LOOKS: Record<Horizon, Look> = {
-  [Horizon.Desert]: { skyTop: 0x3f7fd8, skyLow: 0xf2dcae, silhouette: 0xb98a58, style: 'mesa', maxHeight: 140 },
-  [Horizon.Tropical]: { skyTop: 0x2f8fe0, skyLow: 0xcdeef5, silhouette: 0x2d7a5a, style: 'hills', maxHeight: 120 },
-  [Horizon.Alpine]: { skyTop: 0x2a62b8, skyLow: 0xdfe9f5, silhouette: 0x8fa3bd, style: 'peaks', maxHeight: 340 },
-  [Horizon.City]: { skyTop: 0x4a6aa0, skyLow: 0xd8d4cc, silhouette: 0x575a66, style: 'skyline', maxHeight: 220 },
-  [Horizon.Country]: { skyTop: 0x3c8ae0, skyLow: 0xdcefd0, silhouette: 0x4d8c3c, style: 'hills', maxHeight: 90 },
-  [Horizon.Chaotic]: { skyTop: 0x7a2fb0, skyLow: 0xf0a060, silhouette: 0x30a060, style: 'peaks', maxHeight: 260 },
+  [Horizon.Desert]: { sky: 0x6cc8f8, far: 0xb47848, farAlt: 0x9c6438, near: 0x8c5c30, style: 'mesa', maxHeight: 150 },
+  [Horizon.Tropical]: { sky: 0x50d4fc, far: 0x2c8c40, farAlt: 0x247834, near: 0x145c20, style: 'hills', maxHeight: 130 },
+  [Horizon.Alpine]: { sky: 0x58b0f0, far: 0x8088a0, farAlt: 0x6c7490, near: 0x1c5c24, style: 'peaks', maxHeight: 420, snow: 0xfcfcfc },
+  [Horizon.City]: { sky: 0x78b8e8, far: 0x646878, farAlt: 0x808494, near: 0x2c4c2c, style: 'skyline', maxHeight: 260 },
+  [Horizon.Country]: { sky: 0x5cd4fc, far: 0x4c9c3c, farAlt: 0x449034, near: 0x1c5c1c, style: 'hills', maxHeight: 110 },
+  [Horizon.Chaotic]: { sky: 0xa06cd8, far: 0xc87838, farAlt: 0x5c9c3c, near: 0x3c3c3c, style: 'peaks', maxHeight: 300 },
 };
 
 /** Deterministic pseudo-random so the skyline is identical every run. */
@@ -31,7 +42,7 @@ function mulberry32(seed: number): () => number {
 
 export interface HorizonView {
   group: THREE.Group;
-  /** Colour to use for scene fog and clear colour so the ground fades into the sky. */
+  /** Sky colour, also used as the clear colour. */
   fogColor: THREE.Color;
   /** Keep the backdrop centred on the camera so it has no parallax. */
   follow(camera: THREE.Camera): void;
@@ -40,92 +51,135 @@ export interface HorizonView {
 
 const RADIUS = 2600;
 
+class Tris {
+  readonly pos: number[] = [];
+  readonly col: number[] = [];
+  private readonly c = new THREE.Color();
+  tri(a: number[], b: number[], c: number[], hex: number): void {
+    this.c.setRGB(
+      vgaQuantize(((hex >> 16) & 255) / 255),
+      vgaQuantize(((hex >> 8) & 255) / 255),
+      vgaQuantize((hex & 255) / 255),
+      THREE.SRGBColorSpace,
+    );
+    for (const p of [a, b, c]) {
+      this.pos.push(p[0]!, p[1]!, p[2]!);
+      this.col.push(this.c.r, this.c.g, this.c.b);
+    }
+  }
+  quad(a: number[], b: number[], c: number[], d: number[], hex: number): void {
+    this.tri(a, b, c, hex);
+    this.tri(a, c, d, hex);
+  }
+  mesh(): THREE.Mesh {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    const m = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false, depthWrite: false });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.renderOrder = -1;
+    return mesh;
+  }
+}
+
+const ring = (a: number, r: number, y: number): number[] => [Math.cos(a) * r, y, Math.sin(a) * r];
+
 export function createHorizon(h: Horizon): HorizonView {
   const look = LOOKS[h];
-  const group = new THREE.Group();
-  const disposables: { dispose(): void }[] = [];
-
-  // Sky dome with a vertical colour gradient.
-  const sky = new THREE.SphereGeometry(RADIUS * 1.2, 24, 12);
-  const pos = sky.getAttribute('position');
-  const colors: number[] = [];
-  const low = new THREE.Color(look.skyLow);
-  const top = new THREE.Color(look.skyTop);
-  const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const t = Math.min(Math.max(pos.getY(i) / (RADIUS * 1.2), 0), 1);
-    c.copy(low).lerp(top, Math.pow(t, 0.6));
-    colors.push(c.r, c.g, c.b);
-  }
-  sky.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  const skyMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
-  const skyMesh = new THREE.Mesh(sky, skyMat);
-  skyMesh.renderOrder = -2;
-  group.add(skyMesh);
-  disposables.push(sky, skyMat);
-
-  // Silhouette wall around the horizon.
   const rand = mulberry32(1000 + h);
-  const segs = 96;
+  const t = new Tris();
+
+  // Far layer.
+  const segs = 72;
   const heights: number[] = [];
   for (let i = 0; i < segs; i++) {
     const r = rand();
     switch (look.style) {
       case 'mesa':
-        heights.push(i % 6 < 3 ? look.maxHeight * (0.25 + 0.75 * rand()) : 20 + 20 * r);
+        heights.push(i % 7 < 3 ? look.maxHeight * (0.45 + 0.55 * rand()) : 0);
         break;
       case 'peaks':
-        heights.push(look.maxHeight * (0.2 + 0.8 * Math.abs(Math.sin(i * 0.37) * 0.6 + r * 0.4)));
+        heights.push(look.maxHeight * (0.35 + 0.65 * r));
         break;
       case 'skyline':
-        heights.push(i % 2 === 0 ? 30 + look.maxHeight * r * r : 30 + 60 * r);
+        heights.push(i % 9 < 5 ? 40 + look.maxHeight * r * r : 0);
         break;
       default:
-        heights.push(look.maxHeight * (0.3 + 0.5 * Math.sin(i * 0.5) ** 2) * (0.7 + 0.3 * r));
+        heights.push(look.maxHeight * (0.35 + 0.65 * Math.sin(i * 0.45 + r) ** 2));
     }
   }
-  const wallPos: number[] = [];
-  const wallCol: number[] = [];
-  const base = new THREE.Color(look.silhouette);
-  const shade = new THREE.Color(look.silhouette).multiplyScalar(0.8);
   for (let i = 0; i < segs; i++) {
     const a0 = (i / segs) * Math.PI * 2;
     const a1 = ((i + 1) / segs) * Math.PI * 2;
+    const am = (a0 + a1) / 2;
     const hh = heights[i]!;
-    const hn = look.style === 'peaks' ? heights[(i + 1) % segs]! : hh; // peaks slope into the next segment
-    const x0 = Math.cos(a0) * RADIUS;
-    const z0 = Math.sin(a0) * RADIUS;
-    const x1 = Math.cos(a1) * RADIUS;
-    const z1 = Math.sin(a1) * RADIUS;
-    const col = i % 2 === 0 ? base : shade;
-    const v = [
-      [x0, -40, z0],
-      [x1, -40, z1],
-      [x1, hn, z1],
-      [x0, -40, z0],
-      [x1, hn, z1],
-      [x0, hh, z0],
-    ];
-    for (const p of v) {
-      wallPos.push(p[0]!, p[1]!, p[2]!);
-      wallCol.push(col.r, col.g, col.b);
+    const col = i % 2 === 0 ? look.far : look.farAlt;
+    if (look.style === 'peaks') {
+      // Triangular mountain per segment, with a snow cap.
+      const apex = ring(am, RADIUS, hh);
+      const cut = 0.62;
+      const l = ring(a0 - 0.02, RADIUS, -20);
+      const rr = ring(a1 + 0.02, RADIUS, -20);
+      const lc = ring(a0 - 0.02 + (am - a0 + 0.02) * cut, RADIUS, -20 + (hh + 20) * cut);
+      const rc = ring(a1 + 0.02 + (am - a1 - 0.02) * cut, RADIUS, -20 + (hh + 20) * cut);
+      t.quad(l, rr, rc, lc, col);
+      t.tri(lc, rc, apex, look.snow ?? col);
+    } else if (look.style === 'hills') {
+      const hn = heights[(i + 1) % segs]!;
+      t.quad(ring(a0, RADIUS, -20), ring(a1, RADIUS, -20), ring(a1, RADIUS, hn), ring(a0, RADIUS, hh), col);
+    } else if (hh > 0) {
+      t.quad(ring(a0, RADIUS, -20), ring(a1, RADIUS, -20), ring(a1, RADIUS, hh), ring(a0, RADIUS, hh), col);
     }
   }
-  const wall = new THREE.BufferGeometry();
-  wall.setAttribute('position', new THREE.Float32BufferAttribute(wallPos, 3));
-  wall.setAttribute('color', new THREE.Float32BufferAttribute(wallCol, 3));
-  const wallMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: true });
-  group.add(new THREE.Mesh(wall, wallMat));
-  disposables.push(wall, wallMat);
+
+  // Near band: a low, dark, ragged tree line slightly in front of the far layer.
+  const nearSegs = 180;
+  for (let i = 0; i < nearSegs; i++) {
+    const a0 = (i / nearSegs) * Math.PI * 2;
+    const a1 = ((i + 1) / nearSegs) * Math.PI * 2;
+    const hh = 18 + 22 * rand();
+    t.quad(ring(a0, RADIUS - 60, -20), ring(a1, RADIUS - 60, -20), ring(a1, RADIUS - 60, hh * 0.8), ring(a0, RADIUS - 60, hh), look.near);
+  }
+
+  // Clouds: flat white octagons high in the sky, facing the centre.
+  for (let k = 0; k < 7; k++) {
+    const a = rand() * Math.PI * 2;
+    const y = 320 + rand() * 380;
+    const w = 140 + rand() * 160;
+    const hgt = w * 0.32;
+    const c = ring(a, RADIUS - 200, y);
+    const tx = -Math.sin(a);
+    const tz = Math.cos(a);
+    const pts: number[][] = [];
+    for (let j = 0; j < 8; j++) {
+      const ang = (j / 8) * Math.PI * 2;
+      const ox = Math.cos(ang) * w;
+      const oy = Math.sin(ang) * hgt;
+      pts.push([c[0]! + tx * ox, c[1]! + oy, c[2]! + tz * ox]);
+    }
+    for (let j = 1; j < 7; j++) t.tri(pts[0]!, pts[j]!, pts[j + 1]!, 0xfcfcfc);
+  }
+
+  const mesh = t.mesh();
+  const group = new THREE.Group();
+  group.add(mesh);
+  const sky = new THREE.Color();
+  sky.setRGB(
+    vgaQuantize(((look.sky >> 16) & 255) / 255),
+    vgaQuantize(((look.sky >> 8) & 255) / 255),
+    vgaQuantize((look.sky & 255) / 255),
+    THREE.SRGBColorSpace,
+  );
 
   return {
     group,
-    fogColor: low.clone(),
+    fogColor: sky,
     follow(camera) {
       group.position.set(camera.position.x, 0, camera.position.z);
     },
     dispose() {
-      disposables.forEach((d) => d.dispose());
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
     },
   };
 }

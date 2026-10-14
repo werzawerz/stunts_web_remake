@@ -12,7 +12,7 @@ function placeLarge(t: Track, x: number, z: number, code: number): void {
  * Our own demo circuit (anticlockwise): start straight along the south side with a loop,
  * large corners, an elevated ramp section on the east side, a pond and a hill in the middle.
  */
-export function buildSampleTrack(horizon: Horizon = Horizon.Desert): Track {
+export function buildSampleTrack(horizon: Horizon = Horizon.Country): Track {
   const t = createEmptyTrack(horizon);
   const el = t.elements;
 

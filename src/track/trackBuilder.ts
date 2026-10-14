@@ -5,19 +5,22 @@ import { MeshBuilder, type V3 } from './meshBuilder';
 import { decodeTerrain, decodeTile, footprint, type Dir, type Surface, type TileInfo } from './tiles';
 import { GRID, Horizon, type Track } from './trkFormat';
 
+// Palette picked from screenshots of the original: flat grass, grey asphalt, yellow centre dashes.
 export const GROUND_COLOR: Record<Horizon, number> = {
-  [Horizon.Desert]: 0xd8b878,
-  [Horizon.Tropical]: 0x5fa04a,
-  [Horizon.Alpine]: 0xe8eef2,
-  [Horizon.City]: 0x7d7d80,
-  [Horizon.Country]: 0x6cb04a,
-  [Horizon.Chaotic]: 0xd8b878,
+  [Horizon.Desert]: 0xc8a464,
+  [Horizon.Tropical]: 0x34a02c,
+  [Horizon.Alpine]: 0x48a040,
+  [Horizon.City]: 0x6c8c58,
+  [Horizon.Country]: 0x3caa30,
+  [Horizon.Chaotic]: 0xc8a464,
 };
 
-const ROAD_COLOR: Record<Surface, number> = { paved: 0x4a4a52, dirt: 0x9a6b3c, ice: 0xbfe3f2 };
-const LINE_COLOR = 0xf0f0f0;
-const WATER_COLOR = 0x2a6fc0;
-const CONCRETE = 0x9a9a9a;
+const ROAD_COLOR: Record<Surface, number> = { paved: 0x4c4c4c, dirt: 0x8c6238, ice: 0xd4e8f0 };
+const CENTRE_LINE: Record<Surface, number | null> = { paved: 0xfce020, dirt: null, ice: 0xffffff };
+const WATER_COLOR = 0x2050c8;
+const CONCRETE = 0x9c9c9c;
+const GANTRY_PILLAR = 0xe4b08c;
+const GANTRY_BANNER = 0xd01818;
 
 // Lift roads and markings above the ground plane to avoid z-fighting.
 const ROAD_LIFT = 0.1;
@@ -102,12 +105,46 @@ function skirt(mb: MeshBuilder, path: Path, halfW: number, color: number, toGrou
 
 const SURFACE_ID: Record<Surface, number> = { paved: SURFACE.Paved, dirt: SURFACE.Dirt, ice: SURFACE.Ice };
 
+/** Dashed stripe along the path centre: dashes of `dash` metres every `period` metres. */
+function dashedLine(mb: MeshBuilder, path: Path, halfW: number, color: number, dash = 3, period = 7): void {
+  const pts = path.pts;
+  let dist = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const la = lateralAt(path, i);
+    const lb = lateralAt(path, i + 1);
+    // Walk the dash pattern across this segment.
+    let s = 0;
+    while (s < len) {
+      const phase = (dist + s) % period;
+      const on = phase < dash;
+      const next = Math.min(len, s + (on ? dash - phase : period - phase));
+      if (on && next - s > 0.05) {
+        const at = (u: number, side: number): V3 => {
+          const t = u / len;
+          const l0 = la[0] + (lb[0] - la[0]) * t;
+          const l1 = la[1] + (lb[1] - la[1]) * t;
+          const ll = Math.hypot(l0, l1) || 1;
+          return [
+            a[0] + (b[0] - a[0]) * t + (l0 / ll) * halfW * side,
+            a[1] + (b[1] - a[1]) * t + (l1 / ll) * halfW * side,
+            a[2] + (b[2] - a[2]) * t + LINE_LIFT,
+          ];
+        };
+        mb.quad(at(s, -1), at(s, 1), at(next, 1), at(next, -1), color);
+      }
+      s = next;
+    }
+    dist += len;
+  }
+}
+
 function paintRoad(mb: MeshBuilder, path: Path, surface: Surface): void {
   ribbon(mb, path, 0, ROAD_HALF_WIDTH, ROAD_LIFT, ROAD_COLOR[surface], SURFACE_ID[surface]);
-  if (surface === 'dirt') return;
-  for (const side of [-1, 1]) {
-    ribbon(mb, path, side * (ROAD_HALF_WIDTH - 0.8), 0.25, LINE_LIFT, LINE_COLOR);
-  }
+  const line = CENTRE_LINE[surface];
+  if (line !== null) dashedLine(mb, path, 0.22, line);
 }
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
@@ -139,16 +176,53 @@ function startGantry(mb: MeshBuilder, c: [number, number], dir: Dir): void {
       mb.quad(at(r0, f0, 0.2), at(r0 + w, f0, 0.2), at(r0 + w, f0 + 1.2, 0.2), at(r0, f0 + 1.2, 0.2), color);
     }
   }
-  // Gantry: two posts and a cross bar, built as axis-aligned boxes around each point.
-  const post = (r: number): void => {
-    const p = at(r, 0, 0);
-    mb.box(p[0] - 0.4, p[1] - 0.4, 0, p[0] + 0.4, p[1] + 0.4, 7, 0xc02020);
+  // Gantry like the original's: two tall pillars carrying a red banner. Pieces are axis-aligned,
+  // so boxes are built from the min/max of their rotated corners.
+  const boxAt = (r0: number, f0: number, r1: number, f1: number, h0: number, h1: number, color: number): void => {
+    const p = at(r0, f0, 0);
+    const q = at(r1, f1, 0);
+    mb.box(Math.min(p[0], q[0]), Math.min(p[1], q[1]), h0, Math.max(p[0], q[0]), Math.max(p[1], q[1]), h1, color);
   };
-  post(-ROAD_HALF_WIDTH - 1);
-  post(ROAD_HALF_WIDTH + 1);
-  const a = at(-ROAD_HALF_WIDTH - 1, 0, 0);
-  const b = at(ROAD_HALF_WIDTH + 1, 0, 0);
-  mb.box(Math.min(a[0], b[0]) - 0.4, Math.min(a[1], b[1]) - 0.4, 6.2, Math.max(a[0], b[0]) + 0.4, Math.max(a[1], b[1]) + 0.4, 7, 0xc02020);
+  const side = ROAD_HALF_WIDTH + 1.6;
+  boxAt(-side - 0.9, -0.9, -side + 0.9, 0.9, 0, 10, GANTRY_PILLAR);
+  boxAt(side - 0.9, -0.9, side + 0.9, 0.9, 0, 10, GANTRY_PILLAR);
+  boxAt(-side + 0.9, -0.4, side - 0.9, 0.4, 7, 9.6, GANTRY_BANNER);
+  // White pixel lettering on both faces, readable from either direction.
+  for (const face of [-1, 1]) {
+    pixelText(mb, 'START', 0.36, (r, h, w, hh) => {
+      const rr = face < 0 ? r : -r - w;
+      const f = face * 0.42;
+      mb.quad(at(rr, f, h), at(rr + w, f, h), at(rr + w, f, h + hh), at(rr, f, h + hh), 0xffffff);
+    }, 8.3);
+  }
+}
+
+const FONT: Record<string, string[]> = {
+  S: [' ### ', '#    ', '#    ', ' ### ', '    #', '    #', '#### '],
+  T: ['#####', '  #  ', '  #  ', '  #  ', '  #  ', '  #  ', '  #  '],
+  A: [' ### ', '#   #', '#   #', '#####', '#   #', '#   #', '#   #'],
+  R: ['#### ', '#   #', '#   #', '#### ', '# #  ', '#  # ', '#   #'],
+};
+
+/** Lay out a 5x7 pixel font centred on r = 0; `px(r, h, w, h)` draws one pixel block. */
+function pixelText(
+  _mb: MeshBuilder,
+  text: string,
+  size: number,
+  px: (r: number, h: number, w: number, hh: number) => void,
+  centreH: number,
+): void {
+  const width = (text.length * 6 - 1) * size;
+  for (let i = 0; i < text.length; i++) {
+    const glyph = FONT[text[i]!];
+    if (!glyph) continue;
+    for (let row = 0; row < 7; row++) {
+      for (let col = 0; col < 5; col++) {
+        if (glyph[row]![col] !== '#') continue;
+        px(-width / 2 + (i * 6 + col) * size, centreH + (3.5 - row - 1) * size, size, size);
+      }
+    }
+  }
 }
 
 function cornerPath(
@@ -256,29 +330,14 @@ export interface BuiltTrack {
 export function buildTrack(track: Track): BuiltTrack {
   const mb = new MeshBuilder();
   const ground = GROUND_COLOR[track.horizon];
-  const hillColor = new THREE.Color(ground).multiplyScalar(0.85).getHex();
+  const hillColor = new THREE.Color(ground).multiplyScalar(0.92).getHex();
   const size = GRID * TILE;
 
-  // Ground lives in its own mesh, pushed back with polygonOffset, so surfaces drawn just above it
-  // (water, roads) don't z-fight even on GPUs with a coarse depth buffer. Tiles alternate in shade
-  // for a sense of scale; the ring around the playfield is four non-overlapping quads.
-  const gmb = new MeshBuilder();
+  // Ground: one plain, unshaded quad (no seams to crack open at 320x200), in its own mesh pushed
+  // back with polygonOffset so water and roads just above it never z-fight.
+  const gmb = new MeshBuilder(false);
   const big = 6000;
-  const shade = new THREE.Color(ground).multiplyScalar(0.94).getHex();
-  for (let x = 0; x < GRID; x++) {
-    for (let z = 0; z < GRID; z++) {
-      const e = x * TILE;
-      const n = z * TILE;
-      gmb.quad([e, n, 0], [e + TILE, n, 0], [e + TILE, n + TILE, 0], [e, n + TILE, 0], (x + z) % 2 === 0 ? ground : shade);
-    }
-  }
-  const ring: [number, number, number, number][] = [
-    [-big, -big, size + big, 0], // south band
-    [-big, size, size + big, size + big], // north band
-    [-big, 0, 0, size], // west band
-    [size, 0, size + big, size], // east band
-  ];
-  for (const [e0, n0, e1, n1] of ring) gmb.quad([e0, n0, 0], [e1, n0, 0], [e1, n1, 0], [e0, n1, 0], ground);
+  gmb.quad([-big, -big, 0], [size + big, -big, 0], [size + big, size + big, 0], [-big, size + big, 0], ground);
 
   // Terrain.
   const waterTiles: [number, number][] = [];

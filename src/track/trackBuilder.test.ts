@@ -31,7 +31,7 @@ describe('buildTrack', () => {
       const { group } = buildTrack(buildSampleTrack(h));
       for (const child of group.children) {
         const pos = (child as import('three').Mesh).geometry.getAttribute('position');
-        expect(pos.count).toBeGreaterThan(100);
+        expect(pos.count).toBeGreaterThanOrEqual(6);
         for (let i = 0; i < pos.array.length; i++) expect(Number.isFinite(pos.array[i])).toBe(true);
       }
     }

@@ -70,14 +70,21 @@ Client access only via `src/net/supabase.ts` (`getLeaderboard`, `submitLapTime`)
 ## Deploy
 Push to `main` on GitHub → Cloudflare Pages/Netlify builds `npm run build`, output `dist/`. Set the two env vars in the host dashboard.
 
-## Car physics (milestone 4) — design notes
-- `physics/car.ts`: rigid body (quaternion + angular velocity) with 4 raycast wheels, spring/damper suspension, tyre friction circle, rear-wheel drive, 4 substeps per 60 Hz tick. Trig-free so results are bit-identical across JS engines.
-- `physics/collision.ts`: `CollisionWorld` = triangle soup in a 20 m grid + analytic grass plane at height 0. Track pieces emit driveable triangles with a surface id (paved/dirt/ice/grass) while building their render ribbons (`MeshBuilder.tri(..., solid)`).
-- Arcade tuning that matters (found the hard way):
-  - Suspension is deliberately stiff with long travel (60 kN/m, 0.4 m): a loop pulls 2–4 g and a normal-spring car bottoms out and is launched off it.
-  - Loops are a **teardrop**, not a circle (`loopProfile` in `trackBuilder.ts`): gentle bottom, tight top; needs ~80 km/h, ~2.3 g at the bottom. A circle needs ~6 g at minimum speed.
-  - The two passes of a loop cross each other on the centre line on purpose; rays only see the surface below the car so it is harmless. Do not add a sideways shift (cars drive off the road edge).
-  - "Hard landing" crash only counts a touchdown after being airborne (closing speed > 24 m/s), not being pressed into curved road.
-  - Holding the brake at a standstill reverses, like the original.
-- Crash rules: hard landing, rolled over and nearly stopped (0.5 s), driving into water. Hills have no side collision yet (cars pass through hill walls).
-- Debug URLs: `?car=e,n,u,H,speed` spawns the car (e.g. `?car=250,110,0.7,E,24`), `?cam=...` puts the free camera somewhere.
+## Car physics — Stunts-style planted model (`physics/car.ts`)
+Rebuilt after user feedback that the rigid-body/suspension version "did not feel like Stunts". Facts come from https://wiki.stunts.hu/wiki/Car_model_physics and /Car_parameters (see skill `stunts-game-reference`).
+- Engine: rpm = speed × gear ratio (rpm per m/s); force = torque(rpm)·ratio·efficiency; auto gearbox by up/down-shift rpm; traction capped by grip × driveGrip.
+- Brakes: **constant deceleration** (~0.95 g), independent of grip and mass. Holding brake at a standstill engages reverse (throttle then brakes).
+- Cornering: bicycle-model yaw, capped at the front-grip limit; lateral slip removed at ≤ grip·g per second, so the car holds its line until ~1.2 g, then slides (`state.slip`).
+- Surfaces: grip asphalt 1, dirt 0.75, ice 0.25, grass 0.5; grass adds a 0.144·v slowdown.
+- Planted: each substep the car is re-projected onto the road under it and its velocity turned into the road plane (magnitude kept, so loops keep speed). It **takes off** only if the road falls away by more than gravity pulls in that substep (+ a small facet allowance). In the air: ballistic, spin kept from take-off; landing with tilt < 0.55 or > 25 m/s into the road = crash.
+- Ray hits prefer the surface aligned with the car's up (`CollisionWorld.raycast(..., prefer)`) so a car follows *its* road where two cross (loops).
+- Loop: nearly round (bottom radius 16 m, top 8 m, ~22 m tall); entry/exit 12 m apart; needs ~80 km/h.
+- Hills still have no side walls (cars pass through hill sides). No car-vs-object collisions yet.
+- Debug URLs: `?car=e,n,u,H,speed` spawn the car, `?cam=...` free camera, `?view=chase|cockpit|free`, `?sharp` full resolution.
+
+## Look (matches screenshots of the original)
+- 3D renders into a **320×200** back buffer, CSS-scaled with `image-rendering: pixelated` (P toggles sharp mode).
+- Unlit `MeshBasicMaterial`; shading is baked per face in `MeshBuilder` (a few discrete shades) and every colour is snapped to VGA 6-bit steps (`vgaQuantize`).
+- Flat ground (one seamless quad: a tiled ground cracks open at 320×200), flat cyan sky, far hills + dark tree-line band + flat clouds (`render/horizon.ts`).
+- Roads: grey asphalt with a yellow dashed centre line, no edge lines. Start gantry: two beige pillars and a red banner with pixel lettering.
+- Default view is the **cockpit** with the 2D dashboard overlay (`ui/dashboard.ts`, drawn at 320×200); C cycles cockpit / chase / free; H cycles scenery.
