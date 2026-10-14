@@ -28,14 +28,14 @@ function run(
   heading: Heading,
   speed: number,
   ticks: number,
-  input: number | ((t: number) => number),
+  input: number | ((t: number, s: CarState) => number),
 ): Run {
   const s = createCar(DEFAULT_CAR, pos, heading, speed);
   let maxU = pos[2];
   let maxSlip = 0;
   const snaps = new Map<number, CarState>();
   for (let t = 0; t < ticks; t++) {
-    stepCar(s, DEFAULT_CAR, typeof input === 'function' ? input(t) : input, world);
+    stepCar(s, DEFAULT_CAR, typeof input === "function" ? input(t, s) : input, world);
     maxU = Math.max(maxU, s.pos[2]);
     maxSlip = Math.max(maxSlip, s.slip);
     snaps.set(t + 1, structuredClone(s));
@@ -137,13 +137,19 @@ describe('Stunts-style car model', () => {
     expect(r.s.pos[1]).toBeGreaterThan(T(9.5));
   });
 
-  it('takes the ramp, elevated road and descent flat out without crashing', () => {
-    for (const v0 of [20, 35, 50]) {
-      const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', v0, 60 * 14, INPUT.Throttle);
+  it('takes the ramp, elevated road and descent at a sensible speed without crashing', () => {
+    for (const v0 of [15, 25]) {
+      // Throttle only below ~100 km/h: the crest at the top of the descent is then followed.
+      const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', v0, 60 * 18, (_t, car) => (speedOf(car) < 27 ? INPUT.Throttle : 0));
       expect(r.s.crashed, `entry speed ${v0} m/s: ${r.s.crashReason}`).toBe(false);
       expect(r.s.pos[1]).toBeGreaterThan(T(13));
-      expect(r.maxU).toBeLessThan(27.5 + 25); // a hop over the crest, not a launch into orbit
     }
+  });
+
+  it('flying off the top of the descent flat out and dropping 27 m is a hard landing', () => {
+    const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', 20, 60 * 14, INPUT.Throttle);
+    expect(r.s.crashed).toBe(true);
+    expect(r.s.crashReason).toBe('hard landing');
   });
 
   it('crashes when driven into the pond', () => {

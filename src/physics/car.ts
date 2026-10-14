@@ -173,8 +173,18 @@ function alongGuide(guide: Vec3, fwd: Vec3, n: Vec3): Vec3 {
   return length(p) > 0.5 ? p : fwd;
 }
 
+/**
+ * Gravity multiplier in the air. Stunts jumps are short and snappy; real-world gravity at the
+ * game's scale made them long and floaty. Tuned by feel (the original's value isn't known).
+ */
+const AIR_GRAVITY = 1.7;
+/** Speed into the ground (m/s) that wrecks the car on landing: falling off a bridge does. */
+const HARD_LANDING = 17;
+/** Engine braking deceleration (m/s^2) at the rev limit when off the throttle in gear. */
+const ENGINE_BRAKE = 2.2;
+
 /** Vertical speed (m/s) over a crest below which the car stays on the road instead of hopping. */
-const CREST_STICK = 3;
+const CREST_STICK = 10;
 
 /** Closing speed (m/s) above which hitting a wall or object wrecks the car (~22 km/h). */
 const WALL_CRASH_SPEED = 6;
@@ -316,8 +326,10 @@ function groundStep(
   // --- resistances -------------------------------------------------------------------------
   const sp = length(vel);
   if (sp > 1e-6) {
-    // Aero drag only: the original has no rolling resistance on the road.
+    // Aero drag; no rolling resistance on the road, as in the original. Off the throttle in gear
+    // the engine brakes the car, more at high revs.
     let decel = (spec.drag * sp * sp) / spec.mass;
+    if (!driving && !braking && s.gear > 0) decel += ENGINE_BRAKE * (0.4 + 0.6 * Math.min(1, s.rpm / spec.maxRpm));
     if (s.surface === SURFACE.Grass) decel += GRASS_DRAG * sp;
     if (s.crashed) decel += 6;
     vel = scale(vel, Math.max(0, sp - decel * h) / sp);
@@ -390,7 +402,7 @@ function groundStep(
 const AIR_PITCH_RATE = 0.8;
 
 function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): void {
-  s.vel = add(s.vel, [0, 0, -G * h]);
+  s.vel = add(s.vel, [0, 0, -G * AIR_GRAVITY * h]);
   {
     const to = add(s.pos, scale(s.vel, h));
     const wall = hitWalls(
@@ -437,7 +449,7 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
   const closing = -dot(s.vel, n);
   const tilt = dot(up, n);
   if (tilt < 0.35) crash(s, 'landed badly');
-  else if (closing > 32) crash(s, 'hard landing');
+  else if (closing > HARD_LANDING) crash(s, 'hard landing');
 
   const gap = p.hit.t - RAY_UP - spec.rideHeight;
   s.pos = add(s.pos, scale(usedUp, -gap));

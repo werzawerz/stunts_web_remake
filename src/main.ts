@@ -367,7 +367,8 @@ renderer.setAnimationLoop((now) => {
     const eye = toThree([pos[0] + up[0] * 0.8 - fwd[0] * 0.3, pos[1] + up[1] * 0.8 - fwd[1] * 0.3, pos[2] + up[2] * 0.8 - fwd[2] * 0.3]);
     camera.position.copy(eye);
     camera.up.copy(toThree(up));
-    camera.lookAt(toThree([pos[0] + fwd[0] * 25 - up[0] * 2.8, pos[1] + fwd[1] * 25 - up[1] * 2.8, pos[2] + fwd[2] * 25 - up[2] * 2.8]));
+    // Straight ahead along the car: looking slightly down hid the road over crests and up hills.
+    camera.lookAt(toThree([pos[0] + fwd[0] * 25 + up[0] * 0.8, pos[1] + fwd[1] * 25 + up[1] * 0.8, pos[2] + fwd[2] * 25 + up[2] * 0.8]));
   } else if (view === 'chase') {
     camera.up.set(0, 1, 0);
     const hl = Math.hypot(fwd[0], fwd[1]) || 1;
