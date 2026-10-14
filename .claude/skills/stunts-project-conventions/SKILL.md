@@ -51,7 +51,8 @@ bit0 throttle · bit1 brake/reverse · bit2 left · bit3 right · bit4 gear up �
 
 ## Supabase
 Env vars (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in `.env.local` (git-ignored). Only the anon key ever goes to the client; protection through RLS.
-Project: https://nopkuhlhvxkrlpvmclab.supabase.co (publishable key in `.env.local`; schema changes are applied by the user in the dashboard SQL editor — we have no service key/CLI login).
+Project: https://nopkuhlhvxkrlpvmclab.supabase.co (publishable key in `.env.local`).
+Admin access is through the Supabase MCP server in `.mcp.json`, which is scoped to this project and reads `SUPABASE_ACCESS_TOKEN` from the user's environment. Every schema change is written first as a new `supabase/migrations/NNNN_*.sql` file and committed, then applied with the MCP `apply_migration` tool. Never use ad-hoc DDL that skips the migration files.
 Schema lives in `supabase/migrations/*.sql` (binary data stored as base64 text — simpler than bytea through supabase-js):
 - `tracks(id text pk slug, name, author, trk_base64, created_at)` — seeded with `default`
 - `lap_times(id uuid pk, track_id text fk, player_name ≤20, car, time_ms 1s..1h, input_log_base64, created_at)`
