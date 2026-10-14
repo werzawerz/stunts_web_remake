@@ -3,7 +3,8 @@ import { KeyboardInput } from './core/input';
 import { CARS, createCar, DT, INPUT, speedOf, stepCar, type CarSpec, type CarState } from './physics/car';
 import type { CollisionWorld } from './physics/collision';
 import { quatRotate, type Quat, type Vec3 } from './physics/vec';
-import { createCarMesh, setObjectPose } from './render/carMesh';
+import { loadOriginalCarModels, type CarModel } from './original/carModels';
+import { createCarMesh, createCarMeshFromModel, setObjectPose } from './render/carMesh';
 import { FlyCamera } from './render/flyCamera';
 import { createHorizon, type HorizonView } from './render/horizon';
 import { buildSampleTrack } from './track/sampleTrack';
@@ -55,13 +56,18 @@ const PAINT = [0xd81c1c, 0xe8e8e8, 0xfcd820, 0xc81010, 0x205c30, 0x1c3cc8, 0xa89
 const vehicleParam = new URLSearchParams(location.search).get('vehicle');
 let carIndex = Math.max(0, CARS.findIndex((c) => c.id === vehicleParam));
 let spec: CarSpec = CARS[carIndex]!;
-let carObject = createCarMesh(spec, PAINT[carIndex % PAINT.length]);
+// Original car models and names, when the player's own Stunts files are available (dev: original_game/).
+let originalModels: Record<string, CarModel> = {};
+const buildCarObject = (): THREE.Group => {
+  const model = originalModels[spec.id];
+  return model ? createCarMeshFromModel(model, spec) : createCarMesh(spec, PAINT[carIndex % PAINT.length]);
+};
+const carName = (): string => originalModels[spec.id]?.name ?? spec.name;
+let carObject = buildCarObject();
 scene.add(carObject);
 let carNameUntil = 0;
 
-function selectCar(i: number): void {
-  carIndex = (i + CARS.length) % CARS.length;
-  spec = CARS[carIndex]!;
+function replaceCarObject(): void {
   scene.remove(carObject);
   carObject.traverse((o) => {
     if (o instanceof THREE.Mesh) {
@@ -69,8 +75,23 @@ function selectCar(i: number): void {
       (o.material as THREE.Material).dispose();
     }
   });
-  carObject = createCarMesh(spec, PAINT[carIndex % PAINT.length]);
+  carObject = buildCarObject();
   scene.add(carObject);
+}
+
+void loadOriginalCarModels().then((models) => {
+  originalModels = models;
+  if (Object.keys(models).length > 0) {
+    console.info(`[stunts] using ${Object.keys(models).length} original car models`);
+    replaceCarObject();
+    carNameUntil = performance.now() + 4000;
+  }
+});
+
+function selectCar(i: number): void {
+  carIndex = (i + CARS.length) % CARS.length;
+  spec = CARS[carIndex]!;
+  replaceCarObject();
   carNameUntil = performance.now() + 4000;
   resetCar();
 }
@@ -253,7 +274,7 @@ renderer.setAnimationLoop((now) => {
       view === 'free'
         ? 'FREE CAM: WASD Q/E SHIFT, DRAG. C: BACK TO CAR'
         : now < carNameUntil
-          ? `${spec.name.toUpperCase()}  (V: NEXT CAR)`
+          ? `${carName().toUpperCase()}  (V: NEXT CAR)`
           : car.ticks < 240
             ? 'ARROWS DRIVE  R RESTART  V CAR  C CAMERA  H SCENERY  P PIXELS'
             : '',

@@ -91,6 +91,7 @@ Rebuilt after user feedback that the rigid-body/suspension version "did not feel
 - Engine force F = T(rpm)·(2π/60)·ratio (power conservation), traction capped at grip; idle torque replaces the curve below 2560 rpm in 1st and below idle rpm in other gears; no rolling resistance on road.
 - `cars.test.ts` checks every car against its own selection-screen figures: top speed within 8%, 0–60 within −40%/+35%.
 - In game: V / Shift+V cycles cars; `?vehicle=<id>` picks one (ids: nsx, audi, coun, gto, jag, lanc, l002, 962, pc4, indy, zr1).
+- Looks: `src/original/carModels.ts` builds each car from the original detailed model (`car0` in ST*.P3S, scaled 1/20 to world size, material colours from `tools/stunts/materials.json`) and shows the original name (`gnam`), reading the files at runtime from `/original_game/STUNTS11/` (dev server only, git-ignored) or `public/original/`. Without those files it falls back to our own `createCarMesh`. Nothing original is committed.
 - See `docs/ROADMAP.md` for the agreed plan.
 
 ## Look (matches screenshots of the original)

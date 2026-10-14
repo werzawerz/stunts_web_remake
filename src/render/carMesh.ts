@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { DEFAULT_CAR, type CarSpec } from '../physics/car';
 import { MeshBuilder, type V3 } from '../track/meshBuilder';
 import type { Quat, Vec3 } from '../physics/vec';
+import type { CarModel } from '../original/carModels';
 
 /*
  * Our own late-80s wedge sports car, built like the original's cars: a few dozen flat polygons.
@@ -93,6 +94,75 @@ export function createCarMesh(spec: CarSpec = DEFAULT_CAR, body = 0xd81c1c): THR
   const mesh = mb.build();
   mesh.scale.setScalar(S);
   group.add(mesh);
+  return group;
+}
+
+/**
+ * Mesh from an original car model (see src/original/carModels.ts). The original colours each
+ * polygon with its own palette shade, so no extra shading is applied.
+ */
+export function createCarMeshFromModel(model: CarModel, spec: CarSpec, paint = 0): THREE.Group {
+  const mb = new MeshBuilder(false);
+  const p = Math.min(paint, model.paints - 1);
+  const v = (i: number): V3 => {
+    const [x, y, z] = model.verts[i]!;
+    return [x, y, z - spec.rideHeight];
+  };
+  const hex = (c: string): number => parseInt(c.slice(1), 16);
+  for (const prim of model.prims) {
+    const color = hex(prim.colors[p] ?? prim.colors[0]!);
+    if (prim.type <= 10) {
+      mb.poly(prim.idx.map(v), color);
+    } else if (prim.type === 11) {
+      // Sphere: small faceted ball at idx[0], radius 2/3 of the distance to idx[1].
+      const c = v(prim.idx[0]!);
+      const e = v(prim.idx[1]!);
+      const r = Math.hypot(e[0] - c[0], e[1] - c[1], e[2] - c[2]) * (2 / 3);
+      const ax: V3[] = [
+        [r, 0, 0],
+        [-r, 0, 0],
+        [0, r, 0],
+        [0, -r, 0],
+        [0, 0, r],
+        [0, 0, -r],
+      ];
+      const pt = (k: number): V3 => [c[0] + ax[k]![0], c[1] + ax[k]![1], c[2] + ax[k]![2]];
+      for (const [a, b] of [
+        [0, 2],
+        [2, 1],
+        [1, 3],
+        [3, 0],
+      ] as const) {
+        mb.tri(pt(a), pt(b), pt(4), color);
+        mb.tri(pt(b), pt(a), pt(5), color);
+      }
+    } else if (prim.type === 12) {
+      // Wheel: idx 0 and 3 are the centres of the two sides; radius from idx 1 (vertical).
+      const a = v(prim.idx[0]!);
+      const b = v(prim.idx[3]!);
+      const top = v(prim.idx[1]!);
+      const r = Math.hypot(top[0] - a[0], top[1] - a[1], top[2] - a[2]);
+      const ring = (c: V3, k: number, scale: number): V3 => {
+        const ang = ((k + 0.5) / 10) * Math.PI * 2;
+        return [c[0], c[1] + Math.cos(ang) * r * scale, c[2] + Math.sin(ang) * r * scale];
+      };
+      for (let k = 0; k < 10; k++) mb.quad(ring(a, k, 1), ring(a, k + 1, 1), ring(b, k + 1, 1), ring(b, k, 1), color);
+      for (const c of [a, b]) {
+        const outer = Array.from({ length: 10 }, (_, k) => ring(c, k, 1));
+        mb.poly(outer, color);
+        const side = c[0] < 0 ? -0.005 : 0.005;
+        mb.poly(
+          Array.from({ length: 10 }, (_, k) => {
+            const q = ring(c, k, 3 / 5); // rim at 3/5 of the tyre radius, as in the original
+            return [q[0] + side, q[1], q[2]] as V3;
+          }),
+          0x9c9c9c,
+        );
+      }
+    }
+  }
+  const group = new THREE.Group();
+  group.add(mb.build());
   return group;
 }
 

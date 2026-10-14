@@ -14,6 +14,8 @@ with our own assets, deployed as a playable web page with online lap times.
 - [x] Smooth native resolution by default (P cycles retro modes)
 - [x] Real car handling: the 11 original cars converted from `CAR*.RES` (simulated top speeds within
       ~6% of the originals' own figures); V cycles cars
+- [x] Original car models and names, read at runtime from the local Stunts files (`src/original/`);
+      own stand-in model when the files are absent
 
 ## Next (in order)
 1. **Racing** — start countdown, lap timer, per-tile checkpoints (no shortcuts), results screen,
@@ -28,14 +30,20 @@ with our own assets, deployed as a playable web page with online lap times.
 5. **More track pieces** (measured from the original shapes): banked roads/corners, corkscrews,
    pipes and half-pipes, tunnels, bridges, chicanes, split corners, slalom, highway, crossroads,
    buildings (gas station, barn, office, windmill, ship, diner), coasts and angled hill slopes.
-6. **Car looks** — our own low-poly model per car class (wedge supercar, 4x4, rally hatch,
-   prototype racer, open-wheel racer) and a car selection screen.
+6. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
+   jobs each original model has); per-car dashboards.
 7. **Track editor** — 30×30 grid editor like the original; save/share tracks via Supabase.
 8. **Replays and ghosts** — the deterministic simulation already allows input-log replays.
 9. **Sound** — engine pitch from rpm, skids, crash.
 10. **AI opponents** following the track path.
 11. **Manual gearbox** (the original offers auto or manual).
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
+
+## Open decisions
+- **Original car files on the public site.** The game can show the original cars wherever the
+  files are available (`public/original/` is shipped with a build). Whether to publish them is the
+  owner's call; it must be revisited before any monetisation, where "players load their own
+  Stunts files" or our own models are the safe options.
 
 ## Principles
 - Faithful to the original: check mechanics on wiki.stunts.hu and measurements in the original
