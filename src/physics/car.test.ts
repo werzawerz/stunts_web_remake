@@ -150,10 +150,10 @@ describe('Stunts-style car model', () => {
     }
   });
 
-  it('hugs the ramp crests flat out instead of flying off them', () => {
+  it('flies off the ramp crest flat out and lands without crashing', () => {
     const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', 20, 60 * 14, INPUT.Throttle);
     expect(r.s.crashed, r.s.crashReason).toBe(false);
-    expect(r.maxU).toBeLessThan(HILL + 2); // never launched above the elevated deck
+    expect(r.maxU).toBeGreaterThan(HILL + 2); // launched above the elevated deck, like the original
     expect(r.s.pos[1]).toBeGreaterThan(T(13));
   });
 
@@ -174,6 +174,14 @@ describe('walls and obstacles', () => {
     [],
     [-20, wallAt, 0, 20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 3],
   );
+
+  it('landing crashes depend on the angle, not the height (as in the original)', () => {
+    // Dropped from 60 m: almost straight down crashes, a fast shallow flight lands fine.
+    const steep = run(slabWithWall, [0, -400, 60], 'N', 3, 60 * 4, 0);
+    expect(steep.s.crashed).toBe(true);
+    const shallow = run(slabWithWall, [0, -400, 60], 'N', 45, 60 * 4, 0);
+    expect(shallow.s.crashed, shallow.s.crashReason).toBe(false);
+  });
 
   it('crashes when hitting a wall fast', () => {
     const { s } = run(slabWithWall, [0, 0, 0.61], 'N', 25, 60 * 4, INPUT.Throttle);

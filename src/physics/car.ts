@@ -182,16 +182,22 @@ function alongGuide(guide: Vec3, fwd: Vec3, n: Vec3): Vec3 {
  * game's scale made them long and floaty. Tuned by feel (the original's value isn't known).
  */
 const AIR_GRAVITY = 1.7;
-/** Speed into the ground (m/s) that wrecks the car on landing: falling off a bridge does. */
-const HARD_LANDING = 17;
+/**
+ * Landing crash, as in the original: what wrecks the car is the angle it hits the ground at, not
+ * the height it fell from (wiki.stunts.hu "Game versions"; the 1991 versions allow landings close
+ * to vertical). A landing crashes when the speed into the ground is above HARD_LANDING_MIN and
+ * steeper than HARD_LANDING_SLOPE times the speed along the ground (~60 degrees).
+ */
+const HARD_LANDING_MIN = 8;
+const HARD_LANDING_SLOPE = 1.7;
 /** Engine braking deceleration (m/s^2) at the rev limit when off the throttle in gear. */
 const ENGINE_BRAKE = 2.2;
 
 /**
- * Vertical speed (m/s) over a crest below which the car stays on the road. Set so high that cars
- * hug hill tops and ramp lips like in the original; real jumps happen where the road ends.
+ * Speed (m/s) away from the road over a crest below which the car stays on it: facet joints and
+ * slow crests don't make it hop, but hill tops and ramp lips at speed launch it, as in the original.
  */
-const CREST_STICK = 30;
+const CREST_STICK = 3;
 
 /** Closing speed (m/s) above which hitting a wall or object wrecks the car (~22 km/h). */
 const WALL_CRASH_SPEED = 6;
@@ -459,7 +465,10 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
   const closing = -dot(s.vel, n);
   const tilt = dot(up, n);
   if (tilt < 0.35) crash(s, 'landed badly');
-  else if (closing > HARD_LANDING) crash(s, 'hard landing');
+  else {
+    const along = length(sub(s.vel, scale(n, -closing)));
+    if (closing > HARD_LANDING_MIN && closing > along * HARD_LANDING_SLOPE) crash(s, 'hard landing');
+  }
 
   const gap = p.hit.t - RAY_UP - spec.rideHeight;
   s.pos = add(s.pos, scale(usedUp, -gap));
