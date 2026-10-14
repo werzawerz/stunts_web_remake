@@ -28,10 +28,11 @@ describe('buildTrack', () => {
   it('produces finite geometry for every horizon', () => {
     for (const h of [Horizon.Desert, Horizon.Tropical, Horizon.Alpine, Horizon.City, Horizon.Country]) {
       const group = buildTrack(buildSampleTrack(h));
-      const mesh = group.children[0] as import('three').Mesh;
-      const pos = mesh.geometry.getAttribute('position');
-      expect(pos.count).toBeGreaterThan(1000);
-      for (let i = 0; i < pos.array.length; i++) expect(Number.isFinite(pos.array[i])).toBe(true);
+      for (const child of group.children) {
+        const pos = (child as import('three').Mesh).geometry.getAttribute('position');
+        expect(pos.count).toBeGreaterThan(100);
+        for (let i = 0; i < pos.array.length; i++) expect(Number.isFinite(pos.array[i])).toBe(true);
+      }
     }
   });
 });

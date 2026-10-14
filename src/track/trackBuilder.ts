@@ -211,19 +211,26 @@ export function buildTrack(track: Track): THREE.Group {
   const hillColor = new THREE.Color(ground).multiplyScalar(0.85).getHex();
   const size = GRID * TILE;
 
-  // Ground: one large plane, plus a faint checker over the playfield for a sense of scale.
+  // Ground lives in its own mesh, pushed back with polygonOffset, so surfaces drawn just above it
+  // (water, roads) don't z-fight even on GPUs with a coarse depth buffer. Tiles alternate in shade
+  // for a sense of scale; the ring around the playfield is four non-overlapping quads.
+  const gmb = new MeshBuilder();
   const big = 6000;
-  const mid = size / 2;
-  mb.quad([mid - big, mid - big, 0], [mid + big, mid - big, 0], [mid + big, mid + big, 0], [mid - big, mid + big, 0], ground);
   const shade = new THREE.Color(ground).multiplyScalar(0.94).getHex();
   for (let x = 0; x < GRID; x++) {
     for (let z = 0; z < GRID; z++) {
-      if ((x + z) % 2 === 0) continue;
       const e = x * TILE;
       const n = z * TILE;
-      mb.quad([e, n, 0.02], [e + TILE, n, 0.02], [e + TILE, n + TILE, 0.02], [e, n + TILE, 0.02], shade);
+      gmb.quad([e, n, 0], [e + TILE, n, 0], [e + TILE, n + TILE, 0], [e, n + TILE, 0], (x + z) % 2 === 0 ? ground : shade);
     }
   }
+  const ring: [number, number, number, number][] = [
+    [-big, -big, size + big, 0], // south band
+    [-big, size, size + big, size + big], // north band
+    [-big, 0, 0, size], // west band
+    [size, 0, size + big, size], // east band
+  ];
+  for (const [e0, n0, e1, n1] of ring) gmb.quad([e0, n0, 0], [e1, n0, 0], [e1, n1, 0], [e0, n1, 0], ground);
 
   // Terrain.
   for (let x = 0; x < GRID; x++) {
@@ -299,6 +306,11 @@ export function buildTrack(track: Track): THREE.Group {
   }
 
   const group = new THREE.Group();
-  group.add(mb.build());
+  const groundMesh = gmb.build();
+  const gm = groundMesh.material as THREE.MeshLambertMaterial;
+  gm.polygonOffset = true;
+  gm.polygonOffsetFactor = 2;
+  gm.polygonOffsetUnits = 4;
+  group.add(groundMesh, mb.build());
   return group;
 }

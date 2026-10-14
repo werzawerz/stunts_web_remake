@@ -11,7 +11,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, 6000);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 6000);
 // Start south of the track looking north across it (north = -Z in render space).
 camera.position.set(300, 230, 80);
 
@@ -22,6 +22,15 @@ scene.add(sun);
 
 const fly = new FlyCamera(camera, renderer.domElement);
 fly.pitch = -0.55;
+
+// Debug/screenshot aid: ?cam=x,y,z,yawDeg,pitchDeg (render space: x east, y up, z = -north).
+const camParam = new URLSearchParams(location.search).get('cam');
+if (camParam) {
+  const [x, y, z, yaw, pitch] = camParam.split(',').map(Number) as [number, number, number, number, number];
+  camera.position.set(x, y, z);
+  fly.yaw = (yaw * Math.PI) / 180;
+  fly.pitch = (pitch * Math.PI) / 180;
+}
 
 let trackGroup: THREE.Group | null = null;
 let horizonView: HorizonView | null = null;

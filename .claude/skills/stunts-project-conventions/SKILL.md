@@ -49,6 +49,14 @@ bit0 throttle · bit1 brake/reverse · bit2 left · bit3 right · bit4 gear up �
 - `npm run build` / `npm run preview` — production build check
 - `npm run typecheck` — `tsc --noEmit`
 
+## Seeing the game (visual verification)
+Claude can look at the running game itself with headless Chromium (software WebGL):
+1. `npm run dev -- --port 5173 --strictPort` (background).
+2. `node tools/shot.mjs <out.png> [url] [key:holdMs,...] [waitMs]`, then Read the PNG. Page console output and errors are printed.
+3. Camera pose via URL: `?cam=x,y,z,yawDeg,pitchDeg` in render space (x east, y up, z = −north; yaw 0 looks north, positive yaw turns left/west).
+Playwright is a devDependency; its Chromium is installed with `npx playwright install chromium`.
+Gotcha: the software GL has a coarse depth buffer — never put coplanar surfaces within a few cm of each other; the ground mesh uses polygonOffset for this reason.
+
 ## Supabase
 Env vars (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in `.env.local` (git-ignored). Only the anon key ever goes to the client; protection through RLS.
 Project: https://nopkuhlhvxkrlpvmclab.supabase.co (publishable key in `.env.local`).
