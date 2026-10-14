@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { KeyboardInput } from './core/input';
-import { createCar, DEFAULT_CAR, DT, INPUT, speedOf, stepCar, type CarState } from './physics/car';
+import { CARS, createCar, DT, INPUT, speedOf, stepCar, type CarSpec, type CarState } from './physics/car';
 import type { CollisionWorld } from './physics/collision';
 import { quatRotate, type Quat, type Vec3 } from './physics/vec';
 import { createCarMesh, setObjectPose } from './render/carMesh';
@@ -50,8 +50,30 @@ const camera = new THREE.PerspectiveCamera(56, SCREEN_W / SCREEN_H, 0.3, 6000);
 
 const fly = new FlyCamera(camera, dash.canvas);
 const input = new KeyboardInput();
-const carObject = createCarMesh();
+// Car choice (V cycles). Each car gets its own paint, like the original's selection screen.
+const PAINT = [0xd81c1c, 0xe8e8e8, 0xfcd820, 0xc81010, 0x205c30, 0x1c3cc8, 0xa89c74, 0xf0f0f0, 0x6c1c8c, 0x2c2c2c, 0xfc7c1c];
+const vehicleParam = new URLSearchParams(location.search).get('vehicle');
+let carIndex = Math.max(0, CARS.findIndex((c) => c.id === vehicleParam));
+let spec: CarSpec = CARS[carIndex]!;
+let carObject = createCarMesh(spec, PAINT[carIndex % PAINT.length]);
 scene.add(carObject);
+let carNameUntil = 0;
+
+function selectCar(i: number): void {
+  carIndex = (i + CARS.length) % CARS.length;
+  spec = CARS[carIndex]!;
+  scene.remove(carObject);
+  carObject.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
+  });
+  carObject = createCarMesh(spec, PAINT[carIndex % PAINT.length]);
+  scene.add(carObject);
+  carNameUntil = performance.now() + 4000;
+  resetCar();
+}
 
 // ---- scene state ---------------------------------------------------------------------------
 let trackGroup: THREE.Group | null = null;
@@ -68,7 +90,7 @@ let startPose: { pos: Vec3; heading: 'N' | 'E' | 'S' | 'W' } = { pos: [0, 0, 1],
 let raceTicks = 0;
 
 function resetCar(): void {
-  car = createCar(DEFAULT_CAR, startPose.pos, startPose.heading);
+  car = createCar(spec, startPose.pos, startPose.heading);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
   camInit = false;
@@ -119,6 +141,8 @@ window.addEventListener('keydown', (e) => {
       fly.pitch = -0.3;
     }
     camInit = false;
+  } else if (e.code === 'KeyV') {
+    selectCar(carIndex + (e.shiftKey ? -1 : 1));
   } else if (e.code === 'KeyH') {
     horizon = ((horizon + 1) % 5) as Horizon;
     loadScene(horizon);
@@ -136,7 +160,7 @@ loadScene(horizon);
 const carParam = params.get('car');
 if (carParam) {
   const [e, n, u, hd, v] = carParam.split(',');
-  car = createCar(DEFAULT_CAR, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0));
+  car = createCar(spec, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0));
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
 }
@@ -165,7 +189,7 @@ renderer.setAnimationLoop((now) => {
     if (mask & INPUT.Reset) resetCar();
     prevPos = [...car.pos];
     prevQuat = [...car.quat];
-    stepCar(car, DEFAULT_CAR, mask, world);
+    stepCar(car, spec, mask, world);
     if (!car.crashed) raceTicks++;
     acc -= DT;
   }
@@ -219,7 +243,7 @@ renderer.setAnimationLoop((now) => {
     view,
     speedKmh: speedOf(car) * 3.6,
     rpm: car.rpm,
-    maxRpm: DEFAULT_CAR.maxRpm,
+    maxRpm: spec.maxRpm,
     gear: car.gear,
     steer: car.steer,
     timeSec: raceTicks / 60,
@@ -228,8 +252,10 @@ renderer.setAnimationLoop((now) => {
     help:
       view === 'free'
         ? 'FREE CAM: WASD Q/E SHIFT, DRAG. C: BACK TO CAR'
-        : car.ticks < 240
-          ? 'ARROWS DRIVE  R RESTART  C CAMERA  H SCENERY  P PIXELS'
-          : '',
+        : now < carNameUntil
+          ? `${spec.name.toUpperCase()}  (V: NEXT CAR)`
+          : car.ticks < 240
+            ? 'ARROWS DRIVE  R RESTART  V CAR  C CAMERA  H SCENERY  P PIXELS'
+            : '',
   });
 });

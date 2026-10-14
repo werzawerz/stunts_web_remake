@@ -131,7 +131,7 @@ describe('Stunts-style car model', () => {
   });
 
   it('climbs the ramp onto the elevated section', () => {
-    const r = run(sample, [T(23.5), T(7.3), RIDE], 'N', 15, 60 * 6, INPUT.Throttle);
+    const r = run(sample, [T(23.5), T(7.3), RIDE], 'N', 20, 60 * 8, INPUT.Throttle);
     expect(r.s.crashed).toBe(false);
     expect(r.maxU).toBeGreaterThan(27);
     expect(r.s.pos[1]).toBeGreaterThan(T(9.5));

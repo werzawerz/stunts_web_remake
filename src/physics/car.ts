@@ -1,3 +1,4 @@
+import { ORIGINAL_CARS } from './cars.generated';
 import { SURFACE, type CollisionWorld, type Hit, type SurfaceId } from './collision';
 import {
   add,
@@ -43,30 +44,38 @@ const SUBSTEPS = 4;
 const G = 9.81;
 const RPM_TO_RADS = (2 * Math.PI) / 60;
 
-export interface CarSpec {
+/** Physics numbers converted from an original car (see tools/stunts/gen-cars.mjs). */
+export interface OriginalCarData {
+  id: string;
   name: string;
+  /** kg */
   mass: number;
-  /** Engine rpm per m/s of road speed for each forward gear (Stunts: "gear ratio"). */
+  /** Engine rpm per m/s of road speed for each forward gear (the original's "gear ratio"). */
   gearRatios: number[];
-  reverseRatio: number;
   idleRpm: number;
-  maxRpm: number;
-  upshiftRpm: number;
   downshiftRpm: number;
-  /** Torque (N·m) sampled at equal steps from 0 to `torqueMaxRpm`. */
+  upshiftRpm: number;
+  /** Rev limiter. */
+  maxRpm: number;
+  /** Torque (N·m) per 128 rpm, from 0 rpm up. */
   torque: number[];
-  torqueMaxRpm: number;
-  drivetrainEfficiency: number;
-  /** Share of grip available for traction (≈0.6 rear drive, 1 all-wheel drive). */
-  driveGrip: number;
+  /** Torque used below 2560 rpm in first gear and below idle rpm in the other gears. */
+  idleTorque: number;
   /** Quadratic aero drag (N per (m/s)^2). */
   drag: number;
   /** Constant braking deceleration (m/s^2). */
   brakeDecel: number;
   /** Cornering grip on asphalt, in g. */
   grip: number;
+  /** Grip multipliers for paved, dirt, ice, grass. */
+  surfaceGrip: number[];
   wheelbase: number;
   halfTrack: number;
+  /** The original's own selection-screen figures, used to validate the simulation. */
+  claims: { zeroToSixty: number | null; topMph: number | null };
+}
+
+export interface CarSpec extends OriginalCarData {
   /** Height of the car's origin above the road. */
   rideHeight: number;
   /** tan(max steering angle) at standstill. */
@@ -75,31 +84,15 @@ export interface CarSpec {
   steerFalloff: number;
 }
 
-export const DEFAULT_CAR: CarSpec = {
-  name: 'Streak GT',
-  mass: 1300,
-  gearRatios: [400, 240, 165, 125, 95],
-  reverseRatio: 380,
-  idleRpm: 900,
-  maxRpm: 7500,
-  upshiftRpm: 6900,
-  downshiftRpm: 3800,
-  torque: [250, 290, 330, 370, 400, 410, 400, 370, 300],
-  torqueMaxRpm: 8000,
-  drivetrainEfficiency: 0.85,
-  driveGrip: 0.55,
-  drag: 0.55,
-  brakeDecel: 0.95 * G,
-  grip: 1.2,
-  wheelbase: 3.1,
-  halfTrack: 1.0,
+export const CARS: CarSpec[] = ORIGINAL_CARS.map((d) => ({
+  ...d,
   rideHeight: 0.6,
   maxSteerTan: 0.42,
   steerFalloff: 32,
-};
+}));
 
-/** Grip multiplier per surface: paved, dirt, ice, grass (original defaults 100h, C0h, 40h, 80h). */
-const SURFACE_GRIP = [1, 0.75, 0.25, 0.5];
+export const DEFAULT_CAR: CarSpec = CARS[0]!;
+
 /** Grass slowdown, deceleration per m/s of speed (measured on the original: ~0.144/s). */
 const GRASS_DRAG = 0.144;
 
@@ -147,10 +140,13 @@ export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0
 
 export const speedOf = (s: CarState): number => length(s.vel);
 
-function torqueAt(spec: CarSpec, rpm: number): number {
+function torqueAt(spec: CarSpec, rpm: number, gear: number): number {
+  // The original replaces the bottom of the curve with the idle torque.
+  if (rpm < (gear === 1 ? 2560 : spec.idleRpm)) return spec.idleTorque;
+  const x = rpm / 128;
+  const i = Math.floor(x);
   const t = spec.torque;
-  const x = (Math.min(Math.max(rpm, 0), spec.torqueMaxRpm) / spec.torqueMaxRpm) * (t.length - 1);
-  const i = Math.min(Math.floor(x), t.length - 2);
+  if (i >= t.length - 1) return t[t.length - 1] ?? 0;
   return t[i]! + (t[i + 1]! - t[i]!) * (x - i);
 }
 
@@ -220,7 +216,7 @@ function groundStep(
   }
   const n = here.n;
   s.surface = here.hit.surface;
-  const mu = SURFACE_GRIP[s.surface]!;
+  const mu = spec.surfaceGrip[s.surface] ?? 1;
   // Basis aligned with the road; guided pieces (loops) set the heading themselves.
   const guide = here.hit.guide;
   let fwd = normalize(sub(fwd0, scale(n, dot(fwd0, n))));
@@ -240,7 +236,7 @@ function groundStep(
   let vf = dot(vel, fwd);
   if (s.gear > 0 && brake && vf < 0.5) s.gear = -1;
   else if (s.gear < 0 && throttle && vf > -0.5) s.gear = 1;
-  const ratio = s.gear > 0 ? spec.gearRatios[s.gear - 1]! : spec.reverseRatio;
+  const ratio = s.gear > 0 ? spec.gearRatios[s.gear - 1]! : spec.gearRatios[0]!;
   s.rpm = Math.max(spec.idleRpm, Math.abs(vf) * ratio);
   if (s.gear > 0) {
     if (s.rpm > spec.upshiftRpm && s.gear < spec.gearRatios.length) s.gear++;
@@ -248,8 +244,9 @@ function groundStep(
   }
   const driving = (s.gear > 0 && throttle) || (s.gear < 0 && brake);
   if (driving && s.rpm < spec.maxRpm) {
-    const force = torqueAt(spec, s.rpm) * RPM_TO_RADS * ratio * spec.drivetrainEfficiency;
-    const accel = Math.min(force / spec.mass, gripAccel * spec.driveGrip);
+    // Power conservation: F·v = T·ω, with ω = rpm·2π/60 and rpm = v·ratio.
+    const force = torqueAt(spec, s.rpm, Math.max(s.gear, 1)) * RPM_TO_RADS * ratio;
+    const accel = Math.min(force / spec.mass, gripAccel);
     vel = add(vel, scale(fwd, (s.gear > 0 ? accel : -accel) * h));
   }
   // Brakes: constant deceleration toward standstill (throttle brakes while reversing).
@@ -263,7 +260,8 @@ function groundStep(
   // --- resistances -------------------------------------------------------------------------
   const sp = length(vel);
   if (sp > 1e-6) {
-    let decel = (spec.drag * sp * sp) / spec.mass + 0.12; // aero + a little rolling resistance
+    // Aero drag only: the original has no rolling resistance on the road.
+    let decel = (spec.drag * sp * sp) / spec.mass;
     if (s.surface === SURFACE.Grass) decel += GRASS_DRAG * sp;
     if (s.crashed) decel += 6;
     vel = scale(vel, Math.max(0, sp - decel * h) / sp);

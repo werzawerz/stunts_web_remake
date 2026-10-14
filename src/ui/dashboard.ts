@@ -116,8 +116,8 @@ export class Dashboard {
     }
 
     // Instruments.
-    this.gauge(122, 168, 24, s.rpm / 8000, 8, 'RPM');
-    this.gauge(198, 168, 24, s.speedKmh / 320, 8, 'KM/H');
+    this.gauge(122, 168, 24, s.rpm / (s.maxRpm * 1.1), 8, 'RPM');
+    this.gauge(198, 168, 24, s.speedKmh / 400, 8, 'KM/H');
 
     // Gear indicator between the dials.
     c.fillStyle = '#000000';
