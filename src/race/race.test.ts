@@ -91,6 +91,15 @@ describe('lap and penalty (original rules)', () => {
     expect(lapTotal(s)).toBeCloseTo(s.ticks / 60 + 18, 6);
   });
 
+  it('does not say wrong way over the top of a loop', () => {
+    const loopIdx = route.pieces.findIndex((q) => q.kind === 'loop');
+    const s = createLap();
+    stepLap(s, route, at(loopIdx - 1), velAlong(loopIdx - 1), true, false);
+    const backwards = velAlong(loopIdx).map((v) => -v) as Vec3;
+    stepLap(s, route, at(loopIdx), backwards, true, false);
+    expect(s.wrongWay).toBe(false);
+  });
+
   it('flags driving the wrong way', () => {
     const s = createLap();
     stepLap(s, route, at(1), velAlong(1), true, false);

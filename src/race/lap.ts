@@ -52,10 +52,11 @@ export function stepLap(s: LapState, route: Route, pos: Vec3, vel: Vec3, moving:
   const n = route.pieces.length;
   const p = elementAt(route, pos[0], pos[1]);
 
-  // Wrong way: moving against the route direction of the element we are on.
+  // Wrong way: moving against the route direction of the element we are on. Not inside loops:
+  // over the top of the ring the car really moves backwards, while going the right way round.
   if (p >= 0) {
     const d = route.dirs[p]!;
-    s.wrongWay = vel[0] * d[0] + vel[1] * d[1] < -3;
+    s.wrongWay = route.pieces[p]!.kind !== 'loop' && vel[0] * d[0] + vel[1] * d[1] < -3;
   }
 
   // Finish: back on start/finish, past the line, with the lap complete (or skipped to the end).
