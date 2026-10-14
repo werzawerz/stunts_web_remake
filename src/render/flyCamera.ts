@@ -12,7 +12,9 @@ export class FlyCamera {
     dom: HTMLElement,
   ) {
     camera.rotation.order = 'YXZ';
-    window.addEventListener('keydown', (e) => this.keys.add(e.code));
+    window.addEventListener('keydown', (e) => {
+      if (!(e.target instanceof HTMLInputElement)) this.keys.add(e.code);
+    });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
     dom.addEventListener('pointerdown', (e) => {

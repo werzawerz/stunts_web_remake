@@ -6,6 +6,7 @@ export class KeyboardInput {
 
   constructor() {
     window.addEventListener('keydown', (e) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
       this.down.add(e.code);
     });

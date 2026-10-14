@@ -17,6 +17,10 @@ export interface HudState {
   gear: number;
   steer: number;
   timeSec: number;
+  /** Shortcut penalty so far (the original shows it mid-lap in the in-car view). */
+  penaltySec: number;
+  wrongWay: boolean;
+  finished: boolean;
   crashed: boolean;
   crashReason: string;
   help: string;
@@ -61,7 +65,11 @@ export class Dashboard {
     else if (s.view === 'cockpit') this.cockpit(s);
     else if (s.view === 'chase') this.mini(s);
 
-    if (s.view !== 'free') this.text(formatTime(s.timeSec), SCREEN_W / 2, original ? 22 : 12, 11, '#fcfcfc', 'center');
+    const clockY = original ? 22 : 12;
+    if (s.view !== 'free') this.text(formatTime(s.timeSec), SCREEN_W / 2, clockY, 11, '#fcfcfc', 'center');
+    if (s.view === 'cockpit' && s.penaltySec > 0)
+      this.text(`+${s.penaltySec}s`, SCREEN_W / 2 + 46, clockY, 9, '#fc5454', 'left');
+    if (s.wrongWay && !s.crashed) this.text('Wrong Way', SCREEN_W / 2, 62, 12, '#fcfcfc', 'center');
     if (s.crashed) {
       this.text('CRASHED!', SCREEN_W / 2, 70, 20, '#fc2020', 'center');
       this.text(s.crashReason.toUpperCase(), SCREEN_W / 2, 88, 9, '#fcfcfc', 'center');

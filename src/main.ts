@@ -13,6 +13,10 @@ import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
 import { Dashboard, SCREEN_H, SCREEN_W, type HudState } from './ui/dashboard';
+import { ResultsPanel, typingInForm } from './ui/results';
+import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
+import { buildRoute, type Route } from './race/route';
+import { getLeaderboard, submitLapTime } from './net/supabase';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
 const frame = document.createElement('div');
@@ -120,14 +124,47 @@ let view: View = 'cockpit';
 const camPos = new THREE.Vector3();
 let camInit = false;
 let startPose: { pos: Vec3; heading: 'N' | 'E' | 'S' | 'W' } = { pos: [0, 0, 1], heading: 'N' };
-let raceTicks = 0;
+// ---- race: route, lap clock, penalties, results ---------------------------------------------
+const TRACK_ID = 'default';
+let route: Route | null = null;
+let lap: LapState = createLap();
+/** Input bitmask of every tick since the clock started: enough to replay or verify the lap. */
+let inputLog: number[] = [];
+const results = new ResultsPanel(frame);
 
 function resetCar(): void {
   car = createCar(spec, startPose.pos, startPose.heading);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
   camInit = false;
-  raceTicks = 0;
+  lap = createLap();
+  inputLog = [];
+  results.hide();
+}
+
+function refreshLeaderboard(): void {
+  getLeaderboard(TRACK_ID)
+    .then((rows) => results.setLeaderboard(rows))
+    .catch(() => results.setLeaderboard(null));
+}
+
+function onFinish(): void {
+  const finished = lap;
+  const log = Uint8Array.from(inputLog);
+  const carLabel = carName().slice(0, 30);
+  results.show({ timeSec: finished.ticks / 60, penaltySec: finished.penaltySec, carName: carLabel }, async (name) => {
+    let bin = '';
+    for (const b of log) bin += String.fromCharCode(b);
+    await submitLapTime({
+      trackId: TRACK_ID,
+      playerName: name.slice(0, 20),
+      car: carLabel,
+      timeMs: Math.round(lapTotal(finished) * 1000),
+      inputLogBase64: btoa(bin),
+    });
+    refreshLeaderboard();
+  });
+  refreshLeaderboard();
 }
 
 function loadScene(h: Horizon): void {
@@ -151,6 +188,7 @@ function loadScene(h: Horizon): void {
   scene.add(trackGroup);
 
   const start = findStart(track);
+  route = start ? buildRoute(built.pieces, start.dir) : null;
   if (start) {
     const f = ({ N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] } as const)[start.dir];
     // Start a little behind the line so the player drives through it.
@@ -166,6 +204,10 @@ function loadScene(h: Horizon): void {
 const VIEWS: View[] = ['cockpit', 'chase', 'free'];
 let horizon = Horizon.Country;
 window.addEventListener('keydown', (e) => {
+  if (typingInForm(e)) {
+    if (e.code === 'Escape') (e.target as HTMLElement).blur();
+    return;
+  }
   if (e.code === 'KeyC') {
     view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!;
     if (view === 'free') {
@@ -218,12 +260,20 @@ renderer.setAnimationLoop((now) => {
   last = now;
   acc += frameDt;
   while (acc >= DT) {
-    const mask = input.mask();
-    if (mask & INPUT.Reset) resetCar();
+    const raw = input.mask();
+    if (raw & INPUT.Reset) resetCar();
+    // After the finish the car just rolls out.
+    const mask = lap.phase === 'finished' ? 0 : raw;
     prevPos = [...car.pos];
     prevQuat = [...car.quat];
     stepCar(car, spec, mask, world);
-    if (!car.crashed) raceTicks++;
+    if (route) {
+      const wasRunning = lap.phase === 'running';
+      const moving = (mask & INPUT.Throttle) !== 0 || speedOf(car) > 0.5;
+      stepLap(lap, route, car.pos, car.vel, moving, car.crashed);
+      if (lap.phase === 'running') inputLog.push(mask);
+      if (wasRunning && lap.phase === 'finished') onFinish();
+    }
     acc -= DT;
   }
 
@@ -279,7 +329,10 @@ renderer.setAnimationLoop((now) => {
     maxRpm: spec.maxRpm,
     gear: car.gear,
     steer: car.steer,
-    timeSec: raceTicks / 60,
+    timeSec: lap.ticks / 60,
+    penaltySec: lap.penaltySec,
+    wrongWay: lap.wrongWay && lap.phase === 'running',
+    finished: lap.phase === 'finished',
     crashed: car.crashed,
     crashReason: car.crashReason,
     help:

@@ -342,9 +342,21 @@ function addScenery(mb: MeshBuilder, e: number, n: number, type: 'palm' | 'cactu
  * Build render meshes for a track. Everything is one flat-shaded mesh in world space
  * (Three.js: x = east, y = up, z = -north).
  */
+/** One road element of the track, for working out the route (see race/route.ts). */
+export interface TrackPiece {
+  /** Anchor tile (where the code sits). */
+  anchor: [number, number];
+  /** Every tile the element covers: touching any of them counts as driving it (original rule). */
+  cells: [number, number][];
+  /** Where the road leaves the element at either end, (east, north) in metres. */
+  ends: [[number, number], [number, number]];
+  kind: TileInfo['kind'];
+}
+
 export interface BuiltTrack {
   group: THREE.Group;
   world: CollisionWorld;
+  pieces: TrackPiece[];
 }
 
 export function buildTrack(track: Track): BuiltTrack {
@@ -388,6 +400,7 @@ export function buildTrack(track: Track): BuiltTrack {
   }
 
   // Track elements.
+  const pieces: TrackPiece[] = [];
   for (let x = 0; x < GRID; x++) {
     for (let z = 0; z < GRID; z++) {
       const info = decodeTile(track.elements[x]![z]!);
@@ -395,26 +408,33 @@ export function buildTrack(track: Track): BuiltTrack {
       const fp = footprint(info);
       // Centre of the footprint (it extends east and south from the anchor tile).
       const c: [number, number] = [(x + fp.w / 2) * TILE, (z + 1 - fp.h / 2) * TILE];
+      const road = (path: Path, surface: Surface, guided = false): Path => {
+        paintRoad(mb, path, surface, guided);
+        const a = path.pts[0]!;
+        const b = path.pts[path.pts.length - 1]!;
+        const cells: [number, number][] = [];
+        for (let i = 0; i < fp.w; i++) for (let j = 0; j < fp.h; j++) cells.push([x + i, z - j]);
+        pieces.push({ anchor: [x, z], cells, ends: [[a[0], a[1]], [b[0], b[1]]], kind: info.kind });
+        return path;
+      };
       switch (info.kind) {
         case 'road':
-          paintRoad(mb, straightPath(c, info.axis === 'NS' ? 'N' : 'E'), info.surface);
+          road(straightPath(c, info.axis === 'NS' ? 'N' : 'E'), info.surface);
           break;
         case 'start': {
-          paintRoad(mb, straightPath(c, info.dir), info.surface);
+          road(straightPath(c, info.dir), info.surface);
           startGantry(mb, c, info.dir);
           break;
         }
         case 'elevatedRoad': {
-          const p = straightPath(c, info.axis === 'NS' ? 'N' : 'E', HILL_HEIGHT);
-          paintRoad(mb, p, 'paved');
+          const p = road(straightPath(c, info.axis === 'NS' ? 'N' : 'E', HILL_HEIGHT), 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, false);
           rails(mb, p, CONCRETE);
           pillar(mb, c[0], c[1], HILL_HEIGHT);
           break;
         }
         case 'ramp': {
-          const p = straightPath(c, info.dir, 0, HILL_HEIGHT);
-          paintRoad(mb, p, 'paved');
+          const p = road(straightPath(c, info.dir, 0, HILL_HEIGHT), 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.style === 'solid');
           rails(mb, p, CONCRETE);
           if (info.style === 'elevated') {
@@ -425,10 +445,10 @@ export function buildTrack(track: Track): BuiltTrack {
         }
         case 'loop':
           // The car is guided through the whole loop piece, as you can't steer in the original's loop.
-          paintRoad(mb, loopPath(c, info.axis === 'NS' ? 'N' : 'E'), 'paved', true);
+          road(loopPath(c, info.axis === 'NS' ? 'N' : 'E'), 'paved', true);
           break;
         case 'corner':
-          paintRoad(mb, cornerPath([x, z], info), info.surface);
+          road(cornerPath([x, z], info), info.surface);
           break;
         case 'scenery':
           addScenery(mb, c[0], c[1], info.type);
@@ -446,5 +466,5 @@ export function buildTrack(track: Track): BuiltTrack {
   group.add(groundMesh, mb.build());
   const world = new CollisionWorld(mb.solidPositions, mb.solidSurfaces, mb.solidGuides);
   for (const [x, z] of waterTiles) world.addWater(x, z, TILE);
-  return { group, world };
+  return { group, world, pieces };
 }

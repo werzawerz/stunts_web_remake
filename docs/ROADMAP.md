@@ -19,9 +19,11 @@ with our own assets, deployed as a playable web page with online lap times.
 - [x] Original per-car cockpits (dashboard, roof, instruments, steering wheel, gear box) with live
       needles, steering dot and gear knob, read at runtime from the local Stunts files
 
+- [x] Racing: route from the start line, lap clock (starts when the car moves), the original's
+      shortcut penalty rules (wiki "Penalty time"), "Wrong Way", results screen with name entry,
+      online top 10 via Supabase (each lap stores its input log for replays/validation later)
+
 ## Next (in order)
-1. **Racing** — start countdown, lap timer, per-tile checkpoints (no shortcuts), results screen,
-   online leaderboard via Supabase (`submitLapTime` / `getLeaderboard` already exist).
 2. **Original tracks** — load the six original `.TRK` files locally (DEFAULT, BERNIES, CHERRIS,
    HELENS, JOES, SKIDS); import any `.TRK` from disk.
 3. **Collisions** — solid ramp/elevated side walls, hill sides, gantry, buildings and scenery
