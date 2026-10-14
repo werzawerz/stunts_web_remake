@@ -69,3 +69,15 @@ Client access only via `src/net/supabase.ts` (`getLeaderboard`, `submitLapTime`)
 
 ## Deploy
 Push to `main` on GitHub → Cloudflare Pages/Netlify builds `npm run build`, output `dist/`. Set the two env vars in the host dashboard.
+
+## Car physics (milestone 4) — design notes
+- `physics/car.ts`: rigid body (quaternion + angular velocity) with 4 raycast wheels, spring/damper suspension, tyre friction circle, rear-wheel drive, 4 substeps per 60 Hz tick. Trig-free so results are bit-identical across JS engines.
+- `physics/collision.ts`: `CollisionWorld` = triangle soup in a 20 m grid + analytic grass plane at height 0. Track pieces emit driveable triangles with a surface id (paved/dirt/ice/grass) while building their render ribbons (`MeshBuilder.tri(..., solid)`).
+- Arcade tuning that matters (found the hard way):
+  - Suspension is deliberately stiff with long travel (60 kN/m, 0.4 m): a loop pulls 2–4 g and a normal-spring car bottoms out and is launched off it.
+  - Loops are a **teardrop**, not a circle (`loopProfile` in `trackBuilder.ts`): gentle bottom, tight top; needs ~80 km/h, ~2.3 g at the bottom. A circle needs ~6 g at minimum speed.
+  - The two passes of a loop cross each other on the centre line on purpose; rays only see the surface below the car so it is harmless. Do not add a sideways shift (cars drive off the road edge).
+  - "Hard landing" crash only counts a touchdown after being airborne (closing speed > 24 m/s), not being pressed into curved road.
+  - Holding the brake at a standstill reverses, like the original.
+- Crash rules: hard landing, rolled over and nearly stopped (0.5 s), driving into water. Hills have no side collision yet (cars pass through hill walls).
+- Debug URLs: `?car=e,n,u,H,speed` spawns the car (e.g. `?car=250,110,0.7,E,24`), `?cam=...` puts the free camera somewhere.

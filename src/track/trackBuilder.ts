@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HILL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE } from './constants';
+import { CollisionWorld, SURFACE } from '../physics/collision';
 import { MeshBuilder, type V3 } from './meshBuilder';
 import { decodeTerrain, decodeTile, footprint, type Dir, type Surface, type TileInfo } from './tiles';
 import { GRID, Horizon, type Track } from './trkFormat';
@@ -55,14 +56,29 @@ function lateralAt(path: Path, i: number): [number, number] {
   return [tn / len, -te / len];
 }
 
-function ribbon(mb: MeshBuilder, path: Path, offset: number, halfW: number, lift: number, color: number): void {
+function ribbon(
+  mb: MeshBuilder,
+  path: Path,
+  offset: number,
+  halfW: number,
+  lift: number,
+  color: number,
+  solid?: number,
+): void {
   const edge = (i: number, o: number): V3 => {
     const p = path.pts[i]!;
     const l = lateralAt(path, i);
     return [p[0] + l[0] * o, p[1] + l[1] * o, p[2] + lift];
   };
   for (let i = 0; i < path.pts.length - 1; i++) {
-    mb.quad(edge(i, offset - halfW), edge(i, offset + halfW), edge(i + 1, offset + halfW), edge(i + 1, offset - halfW), color);
+    mb.quad(
+      edge(i, offset - halfW),
+      edge(i, offset + halfW),
+      edge(i + 1, offset + halfW),
+      edge(i + 1, offset - halfW),
+      color,
+      solid,
+    );
   }
 }
 
@@ -84,8 +100,10 @@ function skirt(mb: MeshBuilder, path: Path, halfW: number, color: number, toGrou
   }
 }
 
+const SURFACE_ID: Record<Surface, number> = { paved: SURFACE.Paved, dirt: SURFACE.Dirt, ice: SURFACE.Ice };
+
 function paintRoad(mb: MeshBuilder, path: Path, surface: Surface): void {
-  ribbon(mb, path, 0, ROAD_HALF_WIDTH, ROAD_LIFT, ROAD_COLOR[surface]);
+  ribbon(mb, path, 0, ROAD_HALF_WIDTH, ROAD_LIFT, ROAD_COLOR[surface], SURFACE_ID[surface]);
   if (surface === 'dirt') return;
   for (const side of [-1, 1]) {
     ribbon(mb, path, side * (ROAD_HALF_WIDTH - 0.8), 0.25, LINE_LIFT, LINE_COLOR);
@@ -163,20 +181,46 @@ function cornerPath(
   return { pts };
 }
 
-/** Loop: a vertical circle with forward drift, and a sideways drift so the two passes don't collide. */
-function loopPath(c: [number, number], dir: Dir): Path {
-  const R = 10;
-  const L = 2 * TILE;
-  const D = 14;
-  const s: Sample[] = [];
-  const n = 48;
-  for (let i = 0; i <= n; i++) {
-    const th = (i / n) * 2 * Math.PI;
-    const f = (th / (2 * Math.PI) - 0.5) * L + R * Math.sin(th);
-    const r = D * Math.sin(th) * Math.sin(th / 2) ** 2;
-    s.push([r, f, R * (1 - Math.cos(th))]);
+/**
+ * Loop profile in the (forward, height) plane: a teardrop whose curvature grows from a gentle
+ * bottom to a tight top. A circle would need ~6 g at the bottom at minimum speed; this shape needs
+ * ~2.3 g and about 80 km/h, so cars with ordinary suspension can actually drive it.
+ * Returns samples as [forward, height, arcLength] with forward measured from the loop's start.
+ */
+export function loopProfile(n = 72): { f: number; h: number; s: number }[] {
+  const scale = 0.9; // fit the two-tile footprint
+  const kBottom = 1 / 40 / scale;
+  const kTop = 1 / 5 / scale;
+  const out = [{ f: 0, h: 0, s: 0 }];
+  let f = 0;
+  let h = 0;
+  let s = 0;
+  const dphi = (2 * Math.PI) / n;
+  for (let i = 0; i < n; i++) {
+    const phi = (i + 0.5) * dphi;
+    const k = kBottom + ((kTop - kBottom) * (1 - Math.cos(phi))) / 2;
+    const ds = dphi / k;
+    f += Math.cos(phi) * ds;
+    h += Math.sin(phi) * ds;
+    s += ds;
+    out.push({ f, h, s });
   }
-  return framePath(c, dir, s, true);
+  return out;
+}
+
+/**
+ * Loop piece: the teardrop profile on the centre line. The rising and falling passes deliberately
+ * cross each other (as a loop must); cars are ray-based and only ever see the surface under them,
+ * so crossing is harmless and nobody has to steer inside the loop.
+ */
+function loopPath(c: [number, number], dir: Dir): Path {
+  const prof = loopProfile();
+  const span = prof[prof.length - 1]!.f;
+  const f0 = -span / 2;
+  const samples: Sample[] = [[0, -TILE, 0], [0, f0 - 6, 0]];
+  for (const p of prof) samples.push([0, f0 + p.f, p.h]);
+  samples.push([0, f0 + span + 6, 0], [0, TILE, 0]);
+  return framePath(c, dir, samples, true);
 }
 
 function addScenery(mb: MeshBuilder, e: number, n: number, type: 'palm' | 'cactus' | 'pine'): void {
@@ -205,7 +249,12 @@ function addScenery(mb: MeshBuilder, e: number, n: number, type: 'palm' | 'cactu
  * Build render meshes for a track. Everything is one flat-shaded mesh in world space
  * (Three.js: x = east, y = up, z = -north).
  */
-export function buildTrack(track: Track): THREE.Group {
+export interface BuiltTrack {
+  group: THREE.Group;
+  world: CollisionWorld;
+}
+
+export function buildTrack(track: Track): BuiltTrack {
   const mb = new MeshBuilder();
   const ground = GROUND_COLOR[track.horizon];
   const hillColor = new THREE.Color(ground).multiplyScalar(0.85).getHex();
@@ -233,6 +282,7 @@ export function buildTrack(track: Track): THREE.Group {
   for (const [e0, n0, e1, n1] of ring) gmb.quad([e0, n0, 0], [e1, n0, 0], [e1, n1, 0], [e0, n1, 0], ground);
 
   // Terrain.
+  const waterTiles: [number, number][] = [];
   for (let x = 0; x < GRID; x++) {
     for (let z = 0; z < GRID; z++) {
       const t = decodeTerrain(track.terrain[x]![z]!);
@@ -240,9 +290,10 @@ export function buildTrack(track: Track): THREE.Group {
       const n = z * TILE;
       const c: [number, number] = [e + TILE / 2, n + TILE / 2];
       if (t.kind === 'water') {
+        waterTiles.push([x, z]);
         mb.quad([e, n, 0.06], [e + TILE, n, 0.06], [e + TILE, n + TILE, 0.06], [e, n + TILE, 0.06], WATER_COLOR);
       } else if (t.kind === 'hill') {
-        mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor);
+        mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor, SURFACE.Grass);
       } else if (t.kind === 'slope') {
         const fr = FRAME[t.ascent];
         const at = (r: number, f: number, h: number): V3 => [
@@ -251,7 +302,7 @@ export function buildTrack(track: Track): THREE.Group {
           h,
         ];
         const h = TILE / 2;
-        mb.quad(at(-h, -h, 0), at(h, -h, 0), at(h, h, HILL_HEIGHT), at(-h, h, HILL_HEIGHT), hillColor);
+        mb.quad(at(-h, -h, 0), at(h, -h, 0), at(h, h, HILL_HEIGHT), at(-h, h, HILL_HEIGHT), hillColor, SURFACE.Grass);
         mb.tri(at(-h, -h, 0), at(-h, h, 0), at(-h, h, HILL_HEIGHT), hillColor);
         mb.tri(at(h, -h, 0), at(h, h, 0), at(h, h, HILL_HEIGHT), hillColor);
       }
@@ -312,5 +363,7 @@ export function buildTrack(track: Track): THREE.Group {
   gm.polygonOffsetFactor = 2;
   gm.polygonOffsetUnits = 4;
   group.add(groundMesh, mb.build());
-  return group;
+  const world = new CollisionWorld(mb.solidPositions, mb.solidSurfaces);
+  for (const [x, z] of waterTiles) world.addWater(x, z);
+  return { group, world };
 }

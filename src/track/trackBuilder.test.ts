@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { loopProfile } from './trackBuilder';
 import { buildSampleTrack } from './sampleTrack';
 import { buildTrack } from './trackBuilder';
 import { decodeTile } from './tiles';
@@ -27,12 +28,25 @@ describe('sample track', () => {
 describe('buildTrack', () => {
   it('produces finite geometry for every horizon', () => {
     for (const h of [Horizon.Desert, Horizon.Tropical, Horizon.Alpine, Horizon.City, Horizon.Country]) {
-      const group = buildTrack(buildSampleTrack(h));
+      const { group } = buildTrack(buildSampleTrack(h));
       for (const child of group.children) {
         const pos = (child as import('three').Mesh).geometry.getAttribute('position');
         expect(pos.count).toBeGreaterThan(100);
         for (let i = 0; i < pos.array.length; i++) expect(Number.isFinite(pos.array[i])).toBe(true);
       }
     }
+  });
+});
+
+describe('loopProfile', () => {
+  it('fits two tiles, closes at ground level, and tops out around 20 m', () => {
+    const p = loopProfile();
+    const last = p[p.length - 1]!;
+    expect(last.f).toBeGreaterThan(20);
+    expect(last.f).toBeLessThan(40);
+    expect(Math.abs(last.h)).toBeLessThan(0.01);
+    const top = Math.max(...p.map((q) => q.h));
+    expect(top).toBeGreaterThan(18);
+    expect(top).toBeLessThan(26);
   });
 });
