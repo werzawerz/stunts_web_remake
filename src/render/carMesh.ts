@@ -17,11 +17,11 @@ export function createCarMesh(spec: CarSpec = DEFAULT_CAR, body = 0xd02020): THR
   mb.box(-hw + 0.1, -0.2, bottom + 0.95, hw - 0.1, 1.2, bottom + 1.02, body); // roof
   mb.box(-hw, 1.85, bottom + 0.5, hw, 2.1, bottom + 0.62, 0x222222); // nose strip
   mb.box(-hw, -2.1, bottom + 0.5, hw, -1.9, bottom + 0.75, 0x222222); // spoiler lip
-  const wr = spec.wheelRadius;
+  const wr = 0.33;
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
       const x = sx * spec.halfTrack;
-      const y = sy * spec.halfWheelbase;
+      const y = (sy * spec.wheelbase) / 2;
       const z = -ride + wr;
       mb.box(x - 0.16 + sx * 0.1, y - wr, z - wr, x + 0.16 + sx * 0.1, y + wr, z + wr, 0x111111);
     }

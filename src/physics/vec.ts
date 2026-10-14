@@ -54,6 +54,22 @@ export function quatIntegrate(q: Quat, w: Vec3, dt: number): Quat {
   ]);
 }
 
+export function quatMul(a: Quat, b: Quat): Quat {
+  return [
+    a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+  ];
+}
+
+/** World angular velocity that rotates `from` into `to` over dt (small-angle). */
+export function angularVelocityBetween(from: Quat, to: Quat, dt: number): Vec3 {
+  let d = quatMul(to, quatConj(from));
+  if (d[0] < 0) d = [-d[0], -d[1], -d[2], -d[3]];
+  return [(2 * d[1]) / dt, (2 * d[2]) / dt, (2 * d[3]) / dt];
+}
+
 /** Orientation whose body axes (x, y, z) map to the given orthonormal world vectors. */
 export function quatFromBasis(r: Vec3, f: Vec3, u: Vec3): Quat {
   // Rotation matrix columns are r, f, u.

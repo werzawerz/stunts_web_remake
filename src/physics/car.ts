@@ -1,11 +1,11 @@
-import { SURFACE, type CollisionWorld } from './collision';
+import { SURFACE, type CollisionWorld, type Hit, type SurfaceId } from './collision';
 import {
   add,
+  angularVelocityBetween,
   cross,
   dot,
   length,
   normalize,
-  quatConj,
   quatFromBasis,
   quatIntegrate,
   quatRotate,
@@ -15,7 +15,18 @@ import {
   type Vec3,
 } from './vec';
 
-// Input bitmask (one per fixed tick; this is what replays store).
+/*
+ * Stunts-style car model. Facts from the community's analysis of the original
+ * (https://wiki.stunts.hu/wiki/Car_model_physics, /Car_parameters):
+ *  - speed = engine rpm / gear ratio; force from a torque curve; quadratic aero drag sets top speed
+ *  - brakes give a constant deceleration (~0.9 g), independent of mass and grip
+ *  - cornering is grip-limited (~1.2 g on asphalt); beyond that the car slides
+ *  - surface grip: asphalt 1, dirt 3/4, ice 1/4, grass 1/2; grass also slows the car ∝ speed
+ * The car is kinematic and planted: it follows the road surface and only leaves it when the
+ * surface falls away faster than gravity can pull the car down (crests, ramp lips, loop tops
+ * taken too slowly). In the air it flies ballistically and keeps its spin.
+ */
+
 export const INPUT = {
   Throttle: 1,
   Brake: 2,
@@ -30,75 +41,84 @@ export const SIM_HZ = 60;
 export const DT = 1 / SIM_HZ;
 const SUBSTEPS = 4;
 const G = 9.81;
+const RPM_TO_RADS = (2 * Math.PI) / 60;
 
-/** Mirrors the fields of the original car*.res "simd" block where it makes sense (mass, grip, drag...). */
 export interface CarSpec {
   name: string;
   mass: number;
-  /** Total drive force at standstill (N), shared by driven wheels. */
-  engineForce: number;
-  /** Speed (m/s) where engine force has faded to zero. */
-  maxSpeed: number;
-  reverseForce: number;
-  brakeForce: number;
-  /** Quadratic aero drag coefficient (N per (m/s)^2). */
+  /** Engine rpm per m/s of road speed for each forward gear (Stunts: "gear ratio"). */
+  gearRatios: number[];
+  reverseRatio: number;
+  idleRpm: number;
+  maxRpm: number;
+  upshiftRpm: number;
+  downshiftRpm: number;
+  /** Torque (N·m) sampled at equal steps from 0 to `torqueMaxRpm`. */
+  torque: number[];
+  torqueMaxRpm: number;
+  drivetrainEfficiency: number;
+  /** Share of grip available for traction (≈0.6 rear drive, 1 all-wheel drive). */
+  driveGrip: number;
+  /** Quadratic aero drag (N per (m/s)^2). */
   drag: number;
-  /** Base tyre friction coefficient. */
+  /** Constant braking deceleration (m/s^2). */
+  brakeDecel: number;
+  /** Cornering grip on asphalt, in g. */
   grip: number;
-  /** Front/rear axle grip multipliers. */
-  frontGrip: number;
-  rearGrip: number;
+  wheelbase: number;
   halfTrack: number;
-  halfWheelbase: number;
-  wheelRadius: number;
-  suspRest: number;
-  springK: number;
-  springDamp: number;
-  /** Max steering as tan(angle) at standstill. */
+  /** Height of the car's origin above the road. */
+  rideHeight: number;
+  /** tan(max steering angle) at standstill. */
   maxSteerTan: number;
-  /** Speed (m/s) at which steering authority has halved. */
+  /** Speed (m/s) at which keyboard steering lock has halved. */
   steerFalloff: number;
 }
 
 export const DEFAULT_CAR: CarSpec = {
-  name: 'Streak',
-  mass: 1200,
-  engineForce: 8200,
-  maxSpeed: 78,
-  reverseForce: 4000,
-  brakeForce: 14000,
-  drag: 0.42,
-  grip: 1.25,
-  frontGrip: 1.0,
-  rearGrip: 1.1,
-  halfTrack: 0.82,
-  halfWheelbase: 1.3,
-  wheelRadius: 0.33,
-  suspRest: 0.4,
-  springK: 60000,
-  springDamp: 5500,
-  maxSteerTan: 0.5,
-  steerFalloff: 28,
+  name: 'Streak GT',
+  mass: 1300,
+  gearRatios: [400, 240, 165, 125, 95],
+  reverseRatio: 380,
+  idleRpm: 900,
+  maxRpm: 7500,
+  upshiftRpm: 6900,
+  downshiftRpm: 3800,
+  torque: [250, 290, 330, 370, 400, 410, 400, 370, 300],
+  torqueMaxRpm: 8000,
+  drivetrainEfficiency: 0.85,
+  driveGrip: 0.55,
+  drag: 0.55,
+  brakeDecel: 0.95 * G,
+  grip: 1.2,
+  wheelbase: 2.5,
+  halfTrack: 0.8,
+  rideHeight: 0.5,
+  maxSteerTan: 0.42,
+  steerFalloff: 32,
 };
 
-/** Grip multiplier per surface: paved, dirt, ice, grass. */
-const SURFACE_GRIP = [1.0, 0.72, 0.18, 0.6];
-/** Rolling resistance per surface, as deceleration (m/s^2) per m/s of speed. */
-const SURFACE_DRAG = [0.03, 0.08, 0.02, 0.22];
+/** Grip multiplier per surface: paved, dirt, ice, grass (original defaults 100h, C0h, 40h, 80h). */
+const SURFACE_GRIP = [1, 0.75, 0.25, 0.5];
+/** Grass slowdown, deceleration per m/s of speed (measured on the original: ~0.144/s). */
+const GRASS_DRAG = 0.144;
 
 export interface CarState {
   pos: Vec3;
   vel: Vec3;
   quat: Quat;
-  /** World-space angular velocity (rad/s). */
+  /** Angular velocity, only used while airborne (captured at take-off). */
   angVel: Vec3;
-  /** Smoothed steering input in [-1, 1]. */
   steer: number;
-  /** Suspension compression per wheel (m): FL, FR, RL, RR. */
-  compression: [number, number, number, number];
+  /** -1 = reverse, 1..n forward gears. */
+  gear: number;
+  rpm: number;
+  grounded: boolean;
+  surface: SurfaceId;
+  /** Sideways slip speed (m/s): > ~2 means the tyres are sliding. */
+  slip: number;
   crashed: boolean;
   crashReason: string;
-  upsideDownTicks: number;
   ticks: number;
 }
 
@@ -108,179 +128,224 @@ const HEADING_FWD: Record<Heading, Vec3> = { N: [0, 1, 0], E: [1, 0, 0], S: [0, 
 export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0): CarState {
   const f = HEADING_FWD[heading];
   const u: Vec3 = [0, 0, 1];
-  const r = cross(f, u); // right-hand side when facing f
   return {
     pos: [...pos],
     vel: scale(f, speed),
-    quat: quatFromBasis(r, f, u),
+    quat: quatFromBasis(cross(f, u), f, u),
     angVel: [0, 0, 0],
     steer: 0,
-    compression: [0, 0, 0, 0],
+    gear: 1,
+    rpm: 0,
+    grounded: false,
+    surface: SURFACE.Grass,
+    slip: 0,
     crashed: false,
     crashReason: '',
-    upsideDownTicks: 0,
     ticks: 0,
   };
 }
 
 export const speedOf = (s: CarState): number => length(s.vel);
 
-// Wheel order: FL, FR, RL, RR.
-const WHEEL_SIGN: [number, number][] = [
-  [-1, 1],
-  [1, 1],
-  [-1, -1],
-  [1, -1],
-];
+function torqueAt(spec: CarSpec, rpm: number): number {
+  const t = spec.torque;
+  const x = (Math.min(Math.max(rpm, 0), spec.torqueMaxRpm) / spec.torqueMaxRpm) * (t.length - 1);
+  const i = Math.min(Math.floor(x), t.length - 2);
+  return t[i]! + (t[i + 1]! - t[i]!) * (x - i);
+}
 
-/** Advance one fixed tick (1/60 s). Pure: depends only on (state, spec, input, world). */
-export function stepCar(s: CarState, spec: CarSpec, input: number, world: CollisionWorld): void {
-  const live = !s.crashed;
-  const throttle = live && (input & INPUT.Throttle) !== 0 ? 1 : 0;
-  const brake = live && (input & INPUT.Brake) !== 0 ? 1 : 0;
-  const steerTarget = live ? (input & INPUT.Right ? 1 : 0) - (input & INPUT.Left ? 1 : 0) : 0;
+const RAY_UP = 0.3;
 
-  // Keyboard steering ramps in and returns to centre a bit faster than it ramps out.
-  const rate = (steerTarget === 0 ? 7 : 4.5) * DT;
-  if (s.steer < steerTarget) s.steer = Math.min(steerTarget, s.steer + rate);
-  else if (s.steer > steerTarget) s.steer = Math.max(steerTarget, s.steer - rate);
+interface Probe {
+  hit: Hit;
+  /** Normal of the road triangle under the car (the road is faceted, like the original's planes). */
+  n: Vec3;
+}
 
-  const h = DT / SUBSTEPS;
-  for (let i = 0; i < SUBSTEPS; i++) substep(s, spec, throttle, brake, world, h);
-
-  // Crash rules.
-  const up = quatRotate(s.quat, [0, 0, 1]);
-  const speed = speedOf(s);
-  if (up[2] < 0 && speed < 4) s.upsideDownTicks++;
-  else s.upsideDownTicks = 0;
-  if (!s.crashed && s.upsideDownTicks > 30) crash(s, 'rolled over');
-  if (!s.crashed && world.isWater(s.pos[0], s.pos[1]) && s.pos[2] < 1.2) crash(s, 'splash');
-  s.ticks++;
+/** Look for road under the car along -up, from slightly above the car's origin. */
+function probe(world: CollisionWorld, spec: CarSpec, pos: Vec3, up: Vec3, reach: number): Probe | null {
+  const hit = world.raycast(add(pos, scale(up, RAY_UP)), scale(up, -1), RAY_UP + spec.rideHeight + reach, up);
+  return hit ? { hit, n: hit.n } : null;
 }
 
 function crash(s: CarState, reason: string): void {
+  if (s.crashed) return;
   s.crashed = true;
   s.crashReason = reason;
 }
 
-function substep(s: CarState, spec: CarSpec, throttle: number, brake: number, world: CollisionWorld, h: number): void {
-  const right = quatRotate(s.quat, [1, 0, 0]);
-  const fwd = quatRotate(s.quat, [0, 1, 0]);
-  const up = quatRotate(s.quat, [0, 0, 1]);
-  const down = scale(up, -1);
+/** Advance one fixed tick (1/60 s). Pure: depends only on (state, spec, input, world). */
+export function stepCar(s: CarState, spec: CarSpec, input: number, world: CollisionWorld): void {
+  const live = !s.crashed;
+  const throttle = live && (input & INPUT.Throttle) !== 0;
+  const brake = live && (input & INPUT.Brake) !== 0;
+  const steerTarget = live ? (input & INPUT.Right ? 1 : 0) - (input & INPUT.Left ? 1 : 0) : 0;
 
-  const speedF = dot(s.vel, fwd);
-  const wheelMass = spec.mass / 4;
-  const rayLen = spec.suspRest + spec.wheelRadius;
+  // The keyboard moves the steering wheel at a fixed rate; it springs back faster.
+  const rate = (steerTarget === 0 || Math.sign(steerTarget) !== Math.sign(s.steer) ? 6 : 3.5) * DT;
+  if (s.steer < steerTarget) s.steer = Math.min(steerTarget, s.steer + rate);
+  else if (s.steer > steerTarget) s.steer = Math.max(steerTarget, s.steer - rate);
 
-  // Steering authority falls with speed (a flat 'tan' keeps us trig-free).
-  const sp = length(s.vel);
-  const steerTan = (s.steer * spec.maxSteerTan) / (1 + (sp * sp) / (spec.steerFalloff * spec.steerFalloff));
-
-  const reversing = brake > 0 && throttle === 0 && speedF < 0.8;
-  let force: Vec3 = [0, 0, -G * spec.mass];
-  let torque: Vec3 = [0, 0, 0];
-
-  for (let i = 0; i < 4; i++) {
-    const [sx, sy] = WHEEL_SIGN[i]!;
-    const front = sy > 0;
-    const local: Vec3 = [sx * spec.halfTrack, sy * spec.halfWheelbase, 0];
-    const arm = quatRotate(s.quat, local);
-    const mount = add(s.pos, arm);
-
-    const hit = world.raycast(mount, down, rayLen);
-    const prev = s.compression[i]!;
-    if (!hit) {
-      s.compression[i] = 0;
-      continue;
-    }
-    const springLen = hit.t - spec.wheelRadius;
-    const comp = Math.min(Math.max(spec.suspRest - springLen, 0), spec.suspRest + spec.wheelRadius * 0.5);
-    s.compression[i] = comp;
-    const compVel = (comp - prev) / h;
-    let fs = spec.springK * comp + spec.springDamp * compVel;
-    if (comp > spec.suspRest * 0.9) fs += spec.springK * 6 * (comp - spec.suspRest * 0.9); // bump stop
-    fs = Math.max(fs, 0);
-
-    const n = hit.n;
-    const fSpring = scale(n, fs);
-    force = add(force, fSpring);
-    torque = add(torque, cross(arm, fSpring));
-
-    // Velocity of the contact patch.
-    const vc = add(s.vel, cross(s.angVel, arm));
-    const closing = -dot(vc, n);
-    // Only a touchdown after being airborne counts; being pressed into a curved surface (loops) does not.
-    if (prev === 0 && closing > 24 && !s.crashed) crash(s, 'hard landing');
-
-    // Wheel axes in the contact plane.
-    let fw: Vec3 = front ? normalize(add(fwd, scale(right, steerTan))) : fwd;
-    fw = normalize(sub(fw, scale(n, dot(fw, n))));
-    const sw = normalize(cross(n, fw));
-    const vf = dot(vc, fw);
-    const vs = dot(vc, sw);
-
-    const mu = spec.grip * (front ? spec.frontGrip : spec.rearGrip) * SURFACE_GRIP[hit.surface]!;
-    const lim = mu * fs;
-
-    // Longitudinal: engine (rear wheels), brakes (all wheels), rolling + surface drag.
-    let fx = 0;
-    if (!front) {
-      if (throttle > 0) fx += (spec.engineForce / 2) * Math.max(0, 1 - speedF / spec.maxSpeed);
-      else if (reversing) fx -= spec.reverseForce / 2;
-    }
-    if (brake > 0 && !reversing) {
-      const want = (-vf * wheelMass) / h;
-      const cap = spec.brakeForce / 4;
-      fx += Math.max(-cap, Math.min(cap, want));
-    }
-    fx -= vf * wheelMass * SURFACE_DRAG[hit.surface]!;
-
-    // Lateral grip cancels most sideways slip each substep, limited by what the tyre can give.
-    let fy = (-vs * wheelMass * 0.6) / h;
-
-    // Friction circle.
-    const mag = Math.sqrt(fx * fx + fy * fy);
-    if (mag > lim && mag > 1e-9) {
-      const k = lim / mag;
-      fx *= k;
-      fy *= k;
-    }
-
-    const fTire = add(scale(fw, fx), scale(sw, fy));
-    force = add(force, fTire);
-    torque = add(torque, cross(arm, fTire));
+  const h = DT / SUBSTEPS;
+  for (let i = 0; i < SUBSTEPS; i++) {
+    if (s.grounded) groundStep(s, spec, throttle, brake, world, h);
+    else airStep(s, spec, world, h);
   }
 
-  // Aerodynamic drag at the centre of mass.
-  force = sub(force, scale(s.vel, spec.drag * sp));
+  if (!s.crashed && world.isWater(s.pos[0], s.pos[1]) && s.pos[2] < 1.5) crash(s, 'splash');
+  s.ticks++;
+}
 
-  // Linear integration (semi-implicit Euler).
-  s.vel = add(s.vel, scale(force, h / spec.mass));
+function groundStep(
+  s: CarState,
+  spec: CarSpec,
+  throttle: boolean,
+  brake: boolean,
+  world: CollisionWorld,
+  h: number,
+): void {
+  const up0 = quatRotate(s.quat, [0, 0, 1]);
+  const fwd0 = quatRotate(s.quat, [0, 1, 0]);
+  const here = probe(world, spec, s.pos, up0, 0.4);
+  if (!here) {
+    s.grounded = false;
+    return;
+  }
+  const n = here.n;
+  s.surface = here.hit.surface;
+  const mu = SURFACE_GRIP[s.surface]!;
+  // Basis aligned with the road.
+  let fwd = normalize(sub(fwd0, scale(n, dot(fwd0, n))));
+  let right = cross(fwd, n);
+
+  let vel = sub(s.vel, scale(n, dot(s.vel, n)));
+  const gravity: Vec3 = [0, 0, -G];
+  vel = add(vel, scale(sub(gravity, scale(n, dot(gravity, n))), h));
+
+  // Grip available for cornering and traction. On walls/loops the road presses the car on, so
+  // keep a floor instead of using the raw gravity component.
+  const load = Math.max(0.5, n[2]);
+  const gripAccel = spec.grip * G * mu * load;
+
+  // --- drivetrain --------------------------------------------------------------------------
+  let vf = dot(vel, fwd);
+  if (s.gear > 0 && brake && vf < 0.5) s.gear = -1;
+  else if (s.gear < 0 && throttle && vf > -0.5) s.gear = 1;
+  const ratio = s.gear > 0 ? spec.gearRatios[s.gear - 1]! : spec.reverseRatio;
+  s.rpm = Math.max(spec.idleRpm, Math.abs(vf) * ratio);
+  if (s.gear > 0) {
+    if (s.rpm > spec.upshiftRpm && s.gear < spec.gearRatios.length) s.gear++;
+    else if (s.rpm < spec.downshiftRpm && s.gear > 1) s.gear--;
+  }
+  const driving = (s.gear > 0 && throttle) || (s.gear < 0 && brake);
+  if (driving && s.rpm < spec.maxRpm) {
+    const force = torqueAt(spec, s.rpm) * RPM_TO_RADS * ratio * spec.drivetrainEfficiency;
+    const accel = Math.min(force / spec.mass, gripAccel * spec.driveGrip);
+    vel = add(vel, scale(fwd, (s.gear > 0 ? accel : -accel) * h));
+  }
+  // Brakes: constant deceleration toward standstill (throttle brakes while reversing).
+  const braking = (s.gear > 0 && brake) || (s.gear < 0 && throttle);
+  if (braking) {
+    vf = dot(vel, fwd);
+    const dv = Math.min(Math.abs(vf), spec.brakeDecel * h);
+    vel = sub(vel, scale(fwd, Math.sign(vf) * dv));
+  }
+
+  // --- resistances -------------------------------------------------------------------------
+  const sp = length(vel);
+  if (sp > 1e-6) {
+    let decel = (spec.drag * sp * sp) / spec.mass + 0.12; // aero + a little rolling resistance
+    if (s.surface === SURFACE.Grass) decel += GRASS_DRAG * sp;
+    if (s.crashed) decel += 6;
+    vel = scale(vel, Math.max(0, sp - decel * h) / sp);
+  }
+
+  // --- steering: bicycle model, yaw limited by front grip -------------------------------------
+  vf = dot(vel, fwd);
+  const steerTan = (s.steer * spec.maxSteerTan) / (1 + (vf / spec.steerFalloff) ** 2);
+  let yaw = (vf * steerTan) / spec.wheelbase;
+  const maxYaw = (gripAccel * 1.15) / Math.max(Math.abs(vf), 1);
+  yaw = Math.max(-maxYaw, Math.min(maxYaw, yaw));
+  fwd = normalize(add(fwd, scale(right, yaw * h)));
+  right = cross(fwd, n);
+
+  // --- lateral grip: remove sideways velocity, at most gripAccel per second ---------------------
+  const vs = dot(vel, right);
+  const fix = Math.min(Math.abs(vs), gripAccel * h);
+  vel = sub(vel, scale(right, Math.sign(vs) * fix));
+  s.slip = Math.abs(dot(vel, right));
+
+  // --- move and follow the surface -----------------------------------------------------------
+  const qBefore = s.quat;
+  let pos = add(s.pos, scale(vel, h));
+  const there = probe(world, spec, pos, n, 1.0);
+  const takeOff = (): void => {
+    s.vel = vel;
+    s.pos = pos;
+    s.quat = quatFromBasis(right, fwd, n);
+    s.angVel = angularVelocityBetween(qBefore, s.quat, h);
+    s.grounded = false;
+  };
+  if (!there) return takeOff();
+  const n2 = there.n;
+  const gap = there.hit.t - RAY_UP - spec.rideHeight; // >0: car is above its ride height
+  // The road may fall away by what gravity pulls in one substep, plus a small allowance for the
+  // faceted road (a couple of degrees per segment). More than that and the car takes off.
+  const gIn = Math.max(0, -dot(gravity, n2));
+  const allowed = 0.5 * gIn * h * h + 0.004 + length(vel) * h * 0.035;
+  if (gap > allowed) return takeOff();
+
+  pos = sub(pos, scale(n2, gap));
+  // Turn the velocity into the new road plane, keeping its magnitude (loops keep their speed).
+  const spd = length(vel);
+  const vt = sub(vel, scale(n2, dot(vel, n2)));
+  vel = length(vt) > 1e-6 ? scale(normalize(vt), spd) : vt;
+  fwd = normalize(sub(fwd, scale(n2, dot(fwd, n2))));
+  right = cross(fwd, n2);
+  s.pos = pos;
+  s.vel = vel;
+  s.quat = quatFromBasis(right, fwd, n2);
+  s.angVel = angularVelocityBetween(qBefore, s.quat, h);
+}
+
+function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): void {
+  s.vel = add(s.vel, [0, 0, -G * h]);
   s.pos = add(s.pos, scale(s.vel, h));
-
-  // Angular: solve in body space with a box inertia tensor.
-  const w = 1.8, l = 4.2, hgt = 1.3;
-  const Ix = (spec.mass * (l * l + hgt * hgt)) / 12;
-  const Iy = (spec.mass * (w * w + hgt * hgt)) / 12;
-  const Iz = (spec.mass * (w * w + l * l)) / 12;
-  const inv = quatConj(s.quat);
-  const tb = quatRotate(inv, torque);
-  const wb = quatRotate(inv, s.angVel);
-  const gyro: Vec3 = cross(wb, [Ix * wb[0], Iy * wb[1], Iz * wb[2]]);
-  const nwb: Vec3 = [
-    wb[0] + ((tb[0] - gyro[0]) / Ix) * h,
-    wb[1] + ((tb[1] - gyro[1]) / Iy) * h,
-    wb[2] + ((tb[2] - gyro[2]) / Iz) * h,
-  ];
-  const damp = 1 - 0.4 * h;
-  s.angVel = quatRotate(s.quat, [nwb[0] * damp, nwb[1] * damp, nwb[2] * damp]);
+  s.angVel = scale(s.angVel, 1 - 0.3 * h);
   s.quat = quatIntegrate(s.quat, s.angVel, h);
+  s.slip = 0;
+
+  const up = quatRotate(s.quat, [0, 0, 1]);
+  const fwd = quatRotate(s.quat, [0, 1, 0]);
+  // Landing: road within ride height under the car (along its own up, or straight down).
+  let p = probe(world, spec, s.pos, up, 0);
+  let usedUp = up;
+  if (!p || p.hit.t > RAY_UP + spec.rideHeight) {
+    p = probe(world, spec, s.pos, [0, 0, 1], 0);
+    usedUp = [0, 0, 1];
+    if (!p || p.hit.t > RAY_UP + spec.rideHeight) return;
+  }
+  const n = p.n;
+  const closing = -dot(s.vel, n);
+  const tilt = dot(up, n);
+  if (tilt < 0.55) crash(s, 'landed badly');
+  else if (closing > 25) crash(s, 'hard landing');
+
+  const gap = p.hit.t - RAY_UP - spec.rideHeight;
+  s.pos = add(s.pos, scale(usedUp, -gap));
+  // The landing absorbs the speed into the road; tangential speed is kept.
+  s.vel = sub(s.vel, scale(n, dot(s.vel, n)));
+  let f = normalize(sub(fwd, scale(n, dot(fwd, n))));
+  if (length(f) < 0.5) f = normalize(sub(s.vel, scale(n, dot(s.vel, n))));
+  if (length(f) < 0.5) f = normalize(cross(n, [1, 0, 0]));
+  s.quat = quatFromBasis(cross(f, n), f, n);
+  s.angVel = [0, 0, 0];
+  s.grounded = true;
 }
 
 /** Order-stable fingerprint of the state, for determinism tests and replay validation. */
 export function stateHash(s: CarState): string {
-  const nums = [...s.pos, ...s.vel, ...s.quat, ...s.angVel, s.steer, ...s.compression, s.ticks];
+  const nums = [...s.pos, ...s.vel, ...s.quat, ...s.angVel, s.steer, s.gear, s.rpm, s.ticks];
   let a = 0x811c9dc5;
   const f64 = new Float64Array(1);
   const u32 = new Uint32Array(f64.buffer);

@@ -182,15 +182,14 @@ function cornerPath(
 }
 
 /**
- * Loop profile in the (forward, height) plane: a teardrop whose curvature grows from a gentle
- * bottom to a tight top. A circle would need ~6 g at the bottom at minimum speed; this shape needs
- * ~2.3 g and about 80 km/h, so cars with ordinary suspension can actually drive it.
+ * Loop profile in the (forward, height) plane: nearly round like the original's (radius 16 m at the
+ * bottom, 8 m at the top, ~22 m tall). The slightly tighter top makes it drift forward by ~12 m
+ * per turn, so entry and exit run a road-width apart instead of on top of each other.
  * Returns samples as [forward, height, arcLength] with forward measured from the loop's start.
  */
 export function loopProfile(n = 72): { f: number; h: number; s: number }[] {
-  const scale = 0.9; // fit the two-tile footprint
-  const kBottom = 1 / 40 / scale;
-  const kTop = 1 / 5 / scale;
+  const kBottom = 1 / 16;
+  const kTop = 1 / 8;
   const out = [{ f: 0, h: 0, s: 0 }];
   let f = 0;
   let h = 0;

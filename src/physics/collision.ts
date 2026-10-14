@@ -62,14 +62,23 @@ export class CollisionWorld {
     return this.water.has(key(Math.floor(e / CELL), Math.floor(n / CELL)));
   }
 
-  /** Nearest hit along unit direction d within maxT, or null. */
-  raycast(o: Vec3, d: Vec3, maxT: number): Hit | null {
+  /**
+   * Nearest hit along unit direction d within maxT, or null.
+   * With `prefer`, hits whose normal is within ~20° of it win over nearer ones: where two roads
+   * cross (inside a loop), a car keeps following the surface it is already on.
+   */
+  raycast(o: Vec3, d: Vec3, maxT: number, prefer?: Vec3): Hit | null {
     let best: Hit | null = null;
+    let bestAligned: Hit | null = null;
+    const consider = (hit: Hit): void => {
+      if (!best || hit.t < best.t) best = hit;
+      if (prefer && dot(hit.n, prefer) > 0.94 && (!bestAligned || hit.t < bestAligned.t)) bestAligned = hit;
+    };
 
     // Analytic ground.
     if (d[2] < -1e-9 && o[2] >= -0.5) {
       const t = -o[2] / d[2];
-      if (t >= 0 && t <= maxT) best = { t, n: [0, 0, 1], surface: SURFACE.Grass };
+      if (t >= 0 && t <= maxT) consider({ t, n: [0, 0, 1], surface: SURFACE.Grass });
     }
 
     const ex = o[0] + d[0] * maxT;
@@ -105,13 +114,12 @@ export class CollisionWorld {
           if (v < -1e-6 || u + v > 1 + 1e-6) continue;
           const dist = dot(e2, qv) * inv;
           if (dist < 0 || dist > maxT) continue;
-          if (best && dist >= best.t) continue;
           let n = normalize(cross(e1, e2));
           if (dot(n, d) > 0) n = [-n[0], -n[1], -n[2]];
-          best = { t: dist, n, surface: this.surfaces[t]! as SurfaceId };
+          consider({ t: dist, n, surface: this.surfaces[t]! as SurfaceId });
         }
       }
     }
-    return best;
+    return bestAligned ?? best;
   }
 }

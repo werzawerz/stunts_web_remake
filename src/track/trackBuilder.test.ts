@@ -42,7 +42,7 @@ describe('loopProfile', () => {
   it('fits two tiles, closes at ground level, and tops out around 20 m', () => {
     const p = loopProfile();
     const last = p[p.length - 1]!;
-    expect(last.f).toBeGreaterThan(20);
+    expect(last.f).toBeGreaterThan(11); // entry and exit a road width apart
     expect(last.f).toBeLessThan(40);
     expect(Math.abs(last.h)).toBeLessThan(0.01);
     const top = Math.max(...p.map((q) => q.h));
