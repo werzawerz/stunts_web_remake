@@ -9,6 +9,8 @@ import { createCarMesh, createCarMeshFromModel, setObjectPose } from './render/c
 import { FlyCamera } from './render/flyCamera';
 import { createHorizon, type HorizonView } from './render/horizon';
 import { buildSampleTrack } from './track/sampleTrack';
+import { fetchOriginal } from './original/files';
+import { parseTrk, type Track } from './track/trkFormat';
 import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
@@ -70,7 +72,12 @@ const buildCarObject = (): THREE.Group => {
 const carName = (): string => originalModels[spec.id]?.name ?? spec.name;
 let carObject = buildCarObject();
 scene.add(carObject);
-let carNameUntil = 0;
+let flashText = '';
+let flashUntil = 0;
+function flash(text: string): void {
+  flashText = text;
+  flashUntil = performance.now() + 4000;
+}
 
 /** Show the selected car's original cockpit once (and if) its files have loaded. */
 function updateCockpit(): void {
@@ -99,7 +106,7 @@ void loadOriginalCarModels().then((models) => {
   if (Object.keys(models).length > 0) {
     console.info(`[stunts] using ${Object.keys(models).length} original car models`);
     replaceCarObject();
-    carNameUntil = performance.now() + 4000;
+    flash(`${carName().toUpperCase()}  (V: NEXT CAR)`);
   }
 });
 
@@ -108,7 +115,7 @@ function selectCar(i: number): void {
   spec = CARS[carIndex]!;
   replaceCarObject();
   updateCockpit();
-  carNameUntil = performance.now() + 4000;
+  flash(`${carName().toUpperCase()}  (V: NEXT CAR)`);
   resetCar();
 }
 
@@ -125,7 +132,26 @@ const camPos = new THREE.Vector3();
 let camInit = false;
 let startPose: { pos: Vec3; heading: 'N' | 'E' | 'S' | 'W' } = { pos: [0, 0, 1], heading: 'N' };
 // ---- race: route, lap clock, penalties, results ---------------------------------------------
-const TRACK_ID = 'default';
+// Tracks: our demo circuit plus the six originals, read from the player's own Stunts files.
+interface TrackEntry {
+  id: string;
+  name: string;
+  load: () => Promise<Track | null>;
+}
+const TRACKS: TrackEntry[] = [
+  { id: 'default', name: 'Demo circuit', load: async () => buildSampleTrack() },
+  ...['DEFAULT', 'BERNIES', 'CHERRIS', 'HELENS', 'JOES', 'SKIDS'].map((n) => ({
+    id: `orig-${n.toLowerCase()}`,
+    name: n[0] + n.slice(1).toLowerCase(),
+    load: async () => {
+      const bytes = await fetchOriginal(`${n}.TRK`);
+      return bytes ? parseTrk(bytes) : null;
+    },
+  })),
+];
+let trackIndex = 0;
+let trackId = 'default';
+let currentTrack: Track = buildSampleTrack();
 let route: Route | null = null;
 let lap: LapState = createLap();
 /** Input bitmask of every tick since the clock started: enough to replay or verify the lap. */
@@ -143,7 +169,7 @@ function resetCar(): void {
 }
 
 function refreshLeaderboard(): void {
-  getLeaderboard(TRACK_ID)
+  getLeaderboard(trackId)
     .then((rows) => results.setLeaderboard(rows))
     .catch(() => results.setLeaderboard(null));
 }
@@ -156,7 +182,7 @@ function onFinish(): void {
     let bin = '';
     for (const b of log) bin += String.fromCharCode(b);
     await submitLapTime({
-      trackId: TRACK_ID,
+      trackId: trackId,
       playerName: name.slice(0, 20),
       car: carLabel,
       timeMs: Math.round(lapTotal(finished) * 1000),
@@ -167,7 +193,7 @@ function onFinish(): void {
   refreshLeaderboard();
 }
 
-function loadScene(h: Horizon): void {
+function loadScene(track: Track): void {
   if (trackGroup) {
     scene.remove(trackGroup);
     trackGroup.traverse((o) => {
@@ -181,7 +207,6 @@ function loadScene(h: Horizon): void {
     scene.remove(horizonView.group);
     horizonView.dispose();
   }
-  const track = buildSampleTrack(h);
   const built = buildTrack(track);
   trackGroup = built.group;
   world = built.world;
@@ -192,9 +217,13 @@ function loadScene(h: Horizon): void {
   if (start) {
     const f = ({ N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] } as const)[start.dir];
     // Start a little behind the line so the player drives through it.
-    startPose = { pos: [start.centre[0] - f[0] * 12, start.centre[1] - f[1] * 12, 1], heading: start.dir };
+    const e = start.centre[0] - f[0] * 12;
+    const n = start.centre[1] - f[1] * 12;
+    // Drop the car onto whatever the start line stands on (it can be on a hill).
+    const hit = world.raycast([e, n, 300], [0, 0, -1], 400);
+    startPose = { pos: [e, n, (hit ? 300 - hit.t : 0) + 1], heading: start.dir };
   }
-  horizonView = createHorizon(h);
+  horizonView = createHorizon(track.horizon);
   scene.add(horizonView.group);
   renderer.setClearColor(horizonView.fogColor);
   resetCar();
@@ -202,7 +231,22 @@ function loadScene(h: Horizon): void {
 
 // ---- keys -----------------------------------------------------------------------------------
 const VIEWS: View[] = ['cockpit', 'chase', 'free'];
-let horizon = Horizon.Country;
+
+/** Switch to track i (skipping tracks whose files aren't available, stepping by `step`). */
+async function selectTrack(i: number, step = 1, quiet = false): Promise<void> {
+  for (let k = 0; k < TRACKS.length; k++) {
+    const idx = (((i + k * step) % TRACKS.length) + TRACKS.length) % TRACKS.length;
+    const entry = TRACKS[idx]!;
+    const track = await entry.load();
+    if (!track) continue;
+    trackIndex = idx;
+    trackId = entry.id;
+    currentTrack = track;
+    loadScene(track);
+    if (!quiet) flash(`${entry.name.toUpperCase()}  (T: NEXT TRACK)`);
+    return;
+  }
+}
 window.addEventListener('keydown', (e) => {
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
@@ -218,9 +262,11 @@ window.addEventListener('keydown', (e) => {
     camInit = false;
   } else if (e.code === 'KeyV') {
     selectCar(carIndex + (e.shiftKey ? -1 : 1));
+  } else if (e.code === 'KeyT') {
+    void selectTrack(trackIndex + (e.shiftKey ? -1 : 1), e.shiftKey ? -1 : 1);
   } else if (e.code === 'KeyH') {
-    horizon = ((horizon + 1) % 5) as Horizon;
-    loadScene(horizon);
+    currentTrack.horizon = ((currentTrack.horizon + 1) % 5) as Horizon;
+    loadScene(currentTrack);
   } else if (e.code === 'KeyP') {
     resMode = RES_MODES[(RES_MODES.indexOf(resMode as 2 | 1 | 0) + 1) % RES_MODES.length]!;
     layout();
@@ -231,7 +277,12 @@ window.addEventListener('keydown', (e) => {
 // ?cam=x,y,z,yawDeg,pitchDeg  free camera pose (render space) · ?car=e,n,u,H,speed  spawn the car
 // ?view=chase|cockpit|free    initial view · ?res=0|2|1  native, 640x400 or 320x200
 const params = new URLSearchParams(location.search);
-loadScene(horizon);
+loadScene(currentTrack);
+const trackParam = params.get('track');
+if (trackParam) {
+  const i = TRACKS.findIndex((t) => t.id === trackParam);
+  if (i >= 0) void selectTrack(i, 1, true);
+}
 const carParam = params.get('car');
 if (carParam) {
   const [e, n, u, hd, v] = carParam.split(',');
@@ -338,10 +389,10 @@ renderer.setAnimationLoop((now) => {
     help:
       view === 'free'
         ? 'FREE CAM: WASD Q/E SHIFT, DRAG. C: BACK TO CAR'
-        : now < carNameUntil
-          ? `${carName().toUpperCase()}  (V: NEXT CAR)`
+        : now < flashUntil
+          ? flashText
           : car.ticks < 240
-            ? 'ARROWS DRIVE  R RESTART  V CAR  C CAMERA  H SCENERY  P PIXELS'
+            ? 'ARROWS DRIVE  R RESTART  T TRACK  V CAR  C CAMERA  P PIXELS'
             : '',
   });
 });

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { HILL_HEIGHT, RAIL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE, UNIT } from './constants';
 import { CollisionWorld, SURFACE } from '../physics/collision';
 import { MeshBuilder, type V3 } from './meshBuilder';
-import { decodeTerrain, decodeTile, footprint, type Dir, type Surface, type TileInfo } from './tiles';
+import { decodeTerrain, decodeTile, footprint, type Building, type Dir, type Surface, type TileInfo } from './tiles';
 import { GRID, Horizon, type Track } from './trkFormat';
 
 // Palette picked from screenshots of the original: flat grass, grey asphalt, yellow centre dashes.
@@ -254,7 +254,8 @@ function pixelText(
 
 function cornerPath(
   anchor: [number, number],
-  info: Extract<TileInfo, { kind: 'corner' }>,
+  info: { size: 'sharp' | 'large'; edges: [Dir, Dir] },
+  h = 0,
   segs = 14,
 ): Path {
   const [x, z] = anchor;
@@ -277,7 +278,7 @@ function cornerPath(
   const pts: V3[] = [];
   for (let i = 0; i <= segs; i++) {
     const a = a0 + (d * i) / segs;
-    pts.push([C[0] + r * Math.cos(a), C[1] + r * Math.sin(a), 0]);
+    pts.push([C[0] + r * Math.cos(a), C[1] + r * Math.sin(a), h]);
   }
   return { pts };
 }
@@ -311,6 +312,54 @@ export function loopSamples(ringSegs = 64, bendSegs = 16): Sample[] {
 
 function loopPath(c: [number, number], dir: Dir): Path {
   return framePath(c, dir, loopSamples(), true);
+}
+
+/**
+ * Simple block stand-ins for the original's buildings, at their measured footprints and heights
+ * (GAME2: gass, barn, offi, wind, boat, rest, tenn), until proper models are built.
+ */
+function addBuilding(mb: MeshBuilder, e: number, n: number, type: Building, facing: Dir): void {
+  const u = UNIT;
+  const rot = (w: number, d: number): [number, number] => (facing === 'E' || facing === 'W' ? [d, w] : [w, d]);
+  const block = (w: number, d: number, h0: number, h1: number, color: number): void => {
+    const [hw, hd] = rot(w / 2, d / 2);
+    mb.box(e - hw, n - hd, h0, e + hw, n + hd, h1, color);
+  };
+  switch (type) {
+    case 'tennis':
+      block(300 * u, 500 * u, 0, 0.3, 0x2c8c3c);
+      block(300 * u, 4 * u, 0.3, 1.2, 0xfcfcfc);
+      break;
+    case 'gas':
+      block(240 * u, 200 * u, 0, 160 * u, 0xfcfcfc);
+      block(250 * u, 210 * u, 150 * u, 175 * u, 0xd81c1c);
+      block(80 * u, 40 * u, 0, 120 * u, 0x9c9c9c);
+      break;
+    case 'barn':
+      block(300 * u, 300 * u, 0, 260 * u, 0xa81c1c);
+      block(320 * u, 200 * u, 260 * u, 425 * u, 0x6c1c1c);
+      break;
+    case 'office':
+      block(400 * u, 400 * u, 0, 550 * u, 0x5c7ca8);
+      block(380 * u, 380 * u, 550 * u, 570 * u, 0x9c9c9c);
+      break;
+    case 'windmill':
+      block(140 * u, 140 * u, 0, 380 * u, 0xece8dc);
+      block(150 * u, 150 * u, 380 * u, 460 * u, 0xa81c1c);
+      block(260 * u, 20 * u, 400 * u, 420 * u, 0x6c4c2c);
+      block(20 * u, 20 * u, 300 * u, 495 * u, 0x6c4c2c);
+      break;
+    case 'ship':
+      block(220 * u, 520 * u, 0, 120 * u, 0x2c2c4c);
+      block(160 * u, 200 * u, 120 * u, 260 * u, 0xfcfcfc);
+      block(40 * u, 40 * u, 260 * u, 440 * u, 0xd8a01c);
+      break;
+    case 'diner':
+      block(400 * u, 300 * u, 0, 180 * u, 0xd8c8a0);
+      block(420 * u, 320 * u, 180 * u, 200 * u, 0x2c9c9c);
+      block(160 * u, 20 * u, 200 * u, 292 * u, 0xd81c1c);
+      break;
+  }
 }
 
 /** Scenery at the original's sizes (palm 211, cactus 290, tree 300 units tall). */
@@ -395,9 +444,49 @@ export function buildTrack(track: Track): BuiltTrack {
         mb.quad(at(-h, -h, 0), at(h, -h, 0), at(h, h, HILL_HEIGHT), at(-h, h, HILL_HEIGHT), hillColor, SURFACE.Grass);
         mb.tri(at(-h, -h, 0), at(-h, h, 0), at(-h, h, HILL_HEIGHT), hillColor);
         mb.tri(at(h, -h, 0), at(h, h, 0), at(h, h, HILL_HEIGHT), hillColor);
+      } else if (t.kind === 'corner') {
+        // Hill corner: tile corners at ground or hill height, split along the diagonal that keeps
+        // the raised (or lowered) corner on its own triangle.
+        const [sw, se, ne, nw] = t.heights.map((k) => k * HILL_HEIGHT) as [number, number, number, number];
+        const pSW: V3 = [e, n, sw];
+        const pSE: V3 = [e + TILE, n, se];
+        const pNE: V3 = [e + TILE, n + TILE, ne];
+        const pNW: V3 = [e, n + TILE, nw];
+        if (sw !== ne || t.heights[0] === t.heights[2]) {
+          mb.tri(pSW, pSE, pNW, hillColor, SURFACE.Grass);
+          mb.tri(pSE, pNE, pNW, hillColor, SURFACE.Grass);
+        } else {
+          mb.tri(pSW, pSE, pNE, hillColor, SURFACE.Grass);
+          mb.tri(pSW, pNE, pNW, hillColor, SURFACE.Grass);
+        }
+      } else if (t.kind === 'coast') {
+        // Diagonal coast: water triangle at the named corner.
+        const corners: Record<'SW' | 'SE' | 'NE' | 'NW', V3> = {
+          SW: [e, n, 0.06],
+          SE: [e + TILE, n, 0.06],
+          NE: [e + TILE, n + TILE, 0.06],
+          NW: [e, n + TILE, 0.06],
+        };
+        const order: ('SW' | 'SE' | 'NE' | 'NW')[] = ['SW', 'SE', 'NE', 'NW'];
+        const i = order.indexOf(t.water);
+        mb.tri(corners[order[(i + 3) % 4]!], corners[t.water], corners[order[(i + 1) % 4]!], WATER_COLOR);
       }
     }
   }
+
+  /** Ground height under a tile: hills (terrain 06) raise everything on them to hill level. */
+  const baseHeight = (x: number, z: number): number =>
+    decodeTerrain(track.terrain[x]?.[z] ?? 0).kind === 'hill' ? HILL_HEIGHT : 0;
+  /** Heights at the two ends of a straight on a tile, following a hill slope along its axis. */
+  const slopeEnds = (x: number, z: number, dir: Dir): [number, number] => {
+    const t = decodeTerrain(track.terrain[x]?.[z] ?? 0);
+    const b = baseHeight(x, z);
+    if (t.kind !== 'slope') return [b, b];
+    if (t.ascent === dir) return [0, HILL_HEIGHT];
+    const opposite: Record<Dir, Dir> = { N: 'S', S: 'N', E: 'W', W: 'E' };
+    if (t.ascent === opposite[dir]) return [HILL_HEIGHT, 0];
+    return [b, b];
+  };
 
   // Track elements.
   const pieces: TrackPiece[] = [];
@@ -417,27 +506,62 @@ export function buildTrack(track: Track): BuiltTrack {
         pieces.push({ anchor: [x, z], cells, ends: [[a[0], a[1]], [b[0], b[1]]], kind: info.kind });
         return path;
       };
+      const h = baseHeight(x, z);
+      const along = (axis: 'NS' | 'EW'): Dir => (axis === 'NS' ? 'N' : 'E');
+      const straight = (dir: Dir): Path => {
+        const [h0, h1] = slopeEnds(x, z, dir);
+        return straightPath(c, dir, h0, h1);
+      };
       switch (info.kind) {
+        // Banked roads, tunnels, pipes, highways and slalom are plain-road stand-ins for now.
         case 'road':
-          road(straightPath(c, info.axis === 'NS' ? 'N' : 'E'), info.surface);
+          road(straight(along(info.axis)), info.surface);
           break;
+        case 'longRoad':
+          road(framePath(c, along(info.axis), [[0, -TILE, h], [0, TILE, h]]), 'paved');
+          break;
+        case 'crossroad':
+          road(straight('N'), info.surface);
+          road(straight('E'), info.surface);
+          break;
+        case 'chicane': {
+          // S-bend from one column (or row) of the 2x2 block to the other.
+          const s0 = (info.axis === 'NS') === (info.from === 'W') ? -TILE / 2 : TILE / 2;
+          const samples: Sample[] = [];
+          for (let i = 0; i <= 16; i++) {
+            const t = i / 16;
+            samples.push([s0 + (-2 * s0) * smooth(t), -TILE + 2 * TILE * t, h]);
+          }
+          road(framePath(c, along(info.axis), samples), 'paved');
+          break;
+        }
         case 'start': {
-          road(straightPath(c, info.dir), info.surface);
+          road(straight(info.dir), info.surface);
           startGantry(mb, c, info.dir);
           break;
         }
         case 'elevatedRoad': {
-          const p = road(straightPath(c, info.axis === 'NS' ? 'N' : 'E', HILL_HEIGHT), 'paved');
+          const p = road(straightPath(c, along(info.axis), HILL_HEIGHT), 'paved');
+          skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.solid === true);
+          rails(mb, p, CONCRETE);
+          if (!info.span) pillar(mb, c[0], c[1], HILL_HEIGHT);
+          // "Span over road": a ground road crosses underneath.
+          if (info.span === 'overRoad') road(straight(info.axis === 'NS' ? 'E' : 'N'), 'paved');
+          break;
+        }
+        case 'elevatedCorner': {
+          const p = road(cornerPath([x, z], { size: 'large', edges: info.edges }, HILL_HEIGHT), 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, false);
           rails(mb, p, CONCRETE);
-          pillar(mb, c[0], c[1], HILL_HEIGHT);
+          const mid = p.pts[Math.floor(p.pts.length / 2)]!;
+          pillar(mb, mid[0], mid[1], HILL_HEIGHT);
           break;
         }
         case 'ramp': {
-          const p = road(straightPath(c, info.dir, 0, HILL_HEIGHT), 'paved');
+          const p = road(straightPath(c, info.dir, h, HILL_HEIGHT + h), 'paved');
           skirt(mb, p, ROAD_HALF_WIDTH, CONCRETE, info.style === 'solid');
           rails(mb, p, CONCRETE);
-          if (info.style === 'elevated') {
+          if (info.style !== 'solid') {
             const fr = FRAME[info.dir];
             pillar(mb, c[0] + fr.f[0] * TILE * 0.25, c[1] + fr.f[1] * TILE * 0.25, HILL_HEIGHT * 0.75);
           }
@@ -445,13 +569,30 @@ export function buildTrack(track: Track): BuiltTrack {
         }
         case 'loop':
           // The car is guided through the whole loop piece, as you can't steer in the original's loop.
-          road(loopPath(c, info.axis === 'NS' ? 'N' : 'E'), 'paved', true);
+          road(loopPath(c, along(info.axis)), 'paved', true);
           break;
         case 'corner':
-          road(cornerPath([x, z], info), info.surface);
+          road(cornerPath([x, z], info, h), info.surface);
           break;
+        case 'split': {
+          // Fork: the corner plus a straight continuing from the same entry edge.
+          const bend = road(cornerPath([x, z], info, h), info.surface);
+          const span = info.size === 'large' ? 2 : 1;
+          const entry = bend.pts.find((q) =>
+            info.axis === 'NS'
+              ? Math.abs(q[1] - (z + 1) * TILE) < 1 || Math.abs(q[1] - (z - span + 1) * TILE) < 1
+              : Math.abs(q[0] - x * TILE) < 1 || Math.abs(q[0] - (x + span) * TILE) < 1,
+          )!;
+          const lineC: [number, number] = info.axis === 'NS' ? [entry[0], c[1]] : [c[0], entry[1]];
+          const half = (span * TILE) / 2;
+          road(framePath(lineC, along(info.axis), [[0, -half, h], [0, half, h]]), info.surface);
+          break;
+        }
         case 'scenery':
           addScenery(mb, c[0], c[1], info.type);
+          break;
+        case 'building':
+          addBuilding(mb, c[0], c[1], info.type, info.facing);
           break;
       }
     }

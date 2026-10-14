@@ -37,21 +37,66 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     const l = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
     return [(to[0] - from[0]) / l, (to[1] - from[1]) / l];
   };
+  // Depth-first search with backtracking: at forks (split corners) and crossroads several pieces
+  // continue from the same point; we want the way that leads back to start/finish, and failing
+  // that, the longest way found.
   const ordered: TrackPiece[] = [start];
   const dirs: [number, number][] = [unit(startEntry, start.ends[startExit]!)];
-
-  let point = start.ends[startExit]!;
+  const used = new Set<TrackPiece>([start]);
+  let best: { pieces: TrackPiece[]; dirs: [number, number][] } = { pieces: [...ordered], dirs: [...dirs] };
   let closed = false;
-  for (let guard = 0; guard < pieces.length; guard++) {
-    const next = pieces.find((q) => !ordered.includes(q) && (near(q.ends[0], point) || near(q.ends[1], point)));
-    if (!next) {
-      closed = near(point, startEntry);
-      break;
+  let budget = 20000; // bounds the search on pathological tracks
+
+  /**
+   * Pieces that continue the road at `point`. After a ramp the road may continue further along
+   * the same line instead: Stunts tracks jump over buildings, water and crossing roads.
+   */
+  const continuations = (point: [number, number]): { q: TrackPiece; end: [number, number] }[] => {
+    const touching = pieces
+      .filter((q) => !used.has(q))
+      .flatMap((q) => q.ends.filter((e) => near(e, point)).map((end) => ({ q, end })));
+    const last = ordered[ordered.length - 1]!;
+    if (touching.length > 0 || last.kind !== 'ramp') return touching;
+    const d = dirs[dirs.length - 1]!;
+    let jump: { q: TrackPiece; end: [number, number]; dist: number } | null = null;
+    for (const q of pieces) {
+      if (used.has(q)) continue;
+      for (const end of q.ends) {
+        const dx = end[0] - point[0];
+        const dy = end[1] - point[1];
+        const ahead = dx * d[0] + dy * d[1];
+        const side = Math.abs(dx * d[1] - dy * d[0]);
+        if (ahead > 1 && ahead < 4.5 * TILE && side < 2 && (!jump || ahead < jump.dist)) jump = { q, end, dist: ahead };
+      }
     }
-    const entry = near(next.ends[0], point) ? 0 : 1;
-    ordered.push(next);
-    dirs.push(unit(next.ends[entry]!, next.ends[1 - entry]!));
-    point = next.ends[1 - entry]!;
+    return jump ? [{ q: jump.q, end: jump.end }] : [];
+  };
+
+  const walk = (point: [number, number]): boolean => {
+    if (--budget < 0) return false;
+    if (ordered.length > 2 && near(point, startEntry)) return true;
+    let progressed = false;
+    for (const { q, end } of continuations(point)) {
+      if (used.has(q)) continue;
+      progressed = true;
+      const entry = q.ends[0] === end ? 0 : 1;
+      used.add(q);
+      ordered.push(q);
+      dirs.push(unit(q.ends[entry]!, q.ends[1 - entry]!));
+      if (walk(q.ends[1 - entry]!)) return true;
+      used.delete(q);
+      ordered.pop();
+      dirs.pop();
+    }
+    if (!progressed && ordered.length > best.pieces.length) best = { pieces: [...ordered], dirs: [...dirs] };
+    return false;
+  };
+  closed = walk(start.ends[startExit]!);
+  if (!closed) {
+    ordered.length = 0;
+    ordered.push(...best.pieces);
+    dirs.length = 0;
+    dirs.push(...best.dirs);
   }
 
   const cellIndex = new Map<number, number>();

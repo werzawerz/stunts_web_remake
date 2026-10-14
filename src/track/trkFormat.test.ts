@@ -41,7 +41,8 @@ describe('tiles', () => {
     expect(decodeTile(0x0b)).toEqual({ kind: 'corner', surface: 'paved', size: 'large', edges: ['W', 'S'] });
     expect(decodeTile(0x5f)).toEqual({ kind: 'ramp', style: 'solid', dir: 'E' });
     expect(decodeTile(0xfe)).toEqual({ kind: 'filler' });
-    expect(decodeTile(0x9b)).toEqual({ kind: 'unknown', code: 0x9b });
+    expect(decodeTile(0x9b)).toEqual({ kind: 'building', type: 'gas', facing: 'S' });
+    expect(decodeTile(0xc6)).toEqual({ kind: 'unknown', code: 0xc6 });
   });
 
   it('encodes back to the same code', () => {

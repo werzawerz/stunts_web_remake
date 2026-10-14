@@ -23,9 +23,13 @@ with our own assets, deployed as a playable web page with online lap times.
       shortcut penalty rules (wiki "Penalty time"), "Wrong Way", results screen with name entry,
       online top 10 via Supabase (each lap stores its input log for replays/validation later)
 
+- [x] Original tracks: the six original `.TRK` files load from the local copy (T cycles tracks,
+      own leaderboard each). Every piece code they use is understood; pieces we haven't modelled
+      yet are plain stand-ins (see step 4); routes follow forks, crossroads and jumps over gaps;
+      hill corners, coasts and roads on hills/slopes are built
+
 ## Next (in order)
-2. **Original tracks** — load the six original `.TRK` files locally (DEFAULT, BERNIES, CHERRIS,
-   HELENS, JOES, SKIDS); import any `.TRK` from disk.
+2a. **Import any `.TRK` from disk** (file picker; leaderboard keyed by track content).
 3. **Collisions** — solid ramp/elevated side walls, hill sides, gantry, buildings and scenery
    (crash on hard hits, like the original).
 4. **More track pieces** (measured from the original shapes): banked roads/corners, corkscrews,
