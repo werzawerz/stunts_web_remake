@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createCar, DEFAULT_CAR, INPUT, stepCar } from '../physics/car';
+import { CARS, createCar, DEFAULT_CAR, INPUT, stepCar } from '../physics/car';
+import { TILE } from './constants';
 import { parseResources, parseShape, unpack, type Shape } from '../original/formats';
 import { findStart } from './start';
 import { buildTrack } from './trackBuilder';
@@ -51,4 +52,26 @@ describe.skipIf(!available)('original tracks built from the original shapes', ()
       expect(travelled).toBeGreaterThan(30); // well past the start banner
     });
   }
+});
+
+describe.skipIf(!available)('Default hill (user report: crash at the bottom of the slope)', () => {
+  it('the Indy drives down the hill flat out without leaving the road or crashing', () => {
+    const shapes = loadShapes();
+    const track = parseTrk(new Uint8Array(readFileSync(`${DIR}/DEFAULT.TRK`)));
+    const world = buildTrack(track, shapes).world;
+    const indy = CARS.find((c) => c.id === 'indy')!;
+    for (const v0 of [10, 30, 45]) {
+      const e = 7.5 * TILE;
+      const n = 12.6 * TILE;
+      const hit = world.raycast([e, n, 300], [0, 0, -1], 400)!;
+      const car = createCar(indy, [e, n, 300 - hit.t + 0.7], 'S', v0);
+      let air = 0;
+      for (let t = 0; t < 60 * 4; t++) {
+        stepCar(car, indy, INPUT.Throttle, world);
+        if (t > 30 && !car.grounded) air++;
+      }
+      expect(car.crashed, `v0 ${v0}: ${car.crashReason} ${car.crashDetail ?? ''}`).toBe(false);
+      expect(air, `v0 ${v0}: ticks in the air`).toBe(0);
+    }
+  });
 });

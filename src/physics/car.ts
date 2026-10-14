@@ -106,6 +106,9 @@ export interface CarState {
   /** -1 = reverse, 1..n forward gears. */
   gear: number;
   rpm: number;
+  /** Brake held since the car was moving forward: it brakes to a stop and stays there; a fresh
+   *  press at a standstill is needed to reverse. */
+  brakeLatched: boolean;
   grounded: boolean;
   surface: SurfaceId;
   /** Sideways slip speed (m/s): > ~2 means the tyres are sliding. */
@@ -131,6 +134,7 @@ export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0
     steer: 0,
     gear: 1,
     rpm: 0,
+    brakeLatched: false,
     grounded: false,
     surface: SURFACE.Grass,
     slip: 0,
@@ -183,8 +187,11 @@ const HARD_LANDING = 17;
 /** Engine braking deceleration (m/s^2) at the rev limit when off the throttle in gear. */
 const ENGINE_BRAKE = 2.2;
 
-/** Vertical speed (m/s) over a crest below which the car stays on the road instead of hopping. */
-const CREST_STICK = 10;
+/**
+ * Vertical speed (m/s) over a crest below which the car stays on the road. Set so high that cars
+ * hug hill tops and ramp lips like in the original; real jumps happen where the road ends.
+ */
+const CREST_STICK = 30;
 
 /** Closing speed (m/s) above which hitting a wall or object wrecks the car (~22 km/h). */
 const WALL_CRASH_SPEED = 6;
@@ -249,6 +256,9 @@ export function stepCar(s: CarState, spec: CarSpec, input: number, world: Collis
   const throttle = live && (input & INPUT.Throttle) !== 0;
   const brake = live && (input & INPUT.Brake) !== 0;
   const steerTarget = live ? (input & INPUT.Right ? 1 : 0) - (input & INPUT.Left ? 1 : 0) : 0;
+  // Braking from forward motion latches until the key is released (see CarState.brakeLatched).
+  if (!brake) s.brakeLatched = false;
+  else if (s.gear > 0 && dot(s.vel, quatRotate(s.quat, [0, 1, 0])) > 0.5) s.brakeLatched = true;
 
   // The keyboard moves the steering wheel at a fixed rate; it springs back faster.
   const rate = (steerTarget === 0 || Math.sign(steerTarget) !== Math.sign(s.steer) ? 6 : 3.5) * DT;
@@ -300,7 +310,7 @@ function groundStep(
 
   // --- drivetrain --------------------------------------------------------------------------
   let vf = dot(vel, fwd);
-  if (s.gear > 0 && brake && vf < 0.5) s.gear = -1;
+  if (s.gear > 0 && brake && vf < 0.5 && !s.brakeLatched) s.gear = -1;
   else if (s.gear < 0 && throttle && vf > -0.5) s.gear = 1;
   const ratio = s.gear > 0 ? spec.gearRatios[s.gear - 1]! : spec.gearRatios[0]!;
   s.rpm = Math.max(spec.idleRpm, Math.abs(vf) * ratio);

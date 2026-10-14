@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSampleTrack } from '../track/sampleTrack';
-import { TILE } from '../track/constants';
+import { HILL_HEIGHT as HILL, TILE } from '../track/constants';
 import { buildTrack } from '../track/trackBuilder';
 import { CollisionWorld } from './collision';
 import { createCar, DEFAULT_CAR, INPUT, speedOf, stateHash, stepCar, type CarState, type Heading } from './car';
@@ -71,12 +71,16 @@ describe('Stunts-style car model', () => {
     expect(Math.abs(r.s.pos[0])).toBeLessThan(0.01); // straight as an arrow
   });
 
-  it('brakes with a constant ~0.95 g, then reverses when the brake is held', () => {
-    const r = run(paved, [0, 0, 0.51], 'N', 30, 60 * 8, INPUT.Brake);
+  it('brakes with a constant ~0.95 g, stays stopped while held, reverses on a fresh press', () => {
+    const r = run(paved, [0, 0, 0.51], 'N', 30, 60 * 8, (t) => (t < 60 * 5 || t >= 60 * 5 + 20 ? INPUT.Brake : 0));
     expect(speedOf(r.at(60))).toBeGreaterThan(19.5);
     expect(speedOf(r.at(60))).toBeLessThan(21.5);
     expect(speedOf(r.at(120))).toBeLessThan(12.5); // still linear: 30 → ~11.4 after 2 s
-    expect(r.at(60 * 4).pos[1]).toBeLessThan(52); // stopping distance v²/2a ≈ 48 m
+    expect(r.at(60 * 4).pos[1]).toBeLessThan(52); // stopping distance v²/2a ≈ 50 m
+    // Still holding the brake after stopping: no reverse.
+    expect(r.at(60 * 5).gear).toBe(1);
+    expect(speedOf(r.at(60 * 5))).toBeLessThan(0.1);
+    // Released and pressed again: reverse.
     expect(r.s.gear).toBe(-1);
     expect(r.s.vel[1]).toBeLessThan(-2);
   });
@@ -146,10 +150,11 @@ describe('Stunts-style car model', () => {
     }
   });
 
-  it('flying off the top of the descent flat out and dropping 27 m is a hard landing', () => {
+  it('hugs the ramp crests flat out instead of flying off them', () => {
     const r = run(sample, [T(23.5), T(7.1), RIDE], 'N', 20, 60 * 14, INPUT.Throttle);
-    expect(r.s.crashed).toBe(true);
-    expect(r.s.crashReason).toBe('hard landing');
+    expect(r.s.crashed, r.s.crashReason).toBe(false);
+    expect(r.maxU).toBeLessThan(HILL + 2); // never launched above the elevated deck
+    expect(r.s.pos[1]).toBeGreaterThan(T(13));
   });
 
   it('crashes when driven into the pond', () => {
