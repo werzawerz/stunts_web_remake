@@ -51,10 +51,12 @@ bit0 throttle · bit1 brake/reverse · bit2 left · bit3 right · bit4 gear up �
 
 ## Supabase
 Env vars (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` in `.env.local` (git-ignored). Only the anon key ever goes to the client; protection through RLS.
-Tables:
-- `tracks(id uuid pk, name text, author text, trk bytea, created_at)`
-- `lap_times(id uuid pk, track_id uuid fk, player_name text, car text, time_ms int, input_log bytea, created_at)`
-RLS: public select on both; anon insert on `lap_times` with sanity checks (time_ms > 0, name length ≤ 20). Later: Edge Function re-simulates `input_log` to validate times.
+Project: https://nopkuhlhvxkrlpvmclab.supabase.co (publishable key in `.env.local`; schema changes are applied by the user in the dashboard SQL editor — we have no service key/CLI login).
+Schema lives in `supabase/migrations/*.sql` (binary data stored as base64 text — simpler than bytea through supabase-js):
+- `tracks(id text pk slug, name, author, trk_base64, created_at)` — seeded with `default`
+- `lap_times(id uuid pk, track_id text fk, player_name ≤20, car, time_ms 1s..1h, input_log_base64, created_at)`
+RLS: public select on both; anon insert on `lap_times` only (checks via column constraints). Later: Edge Function re-simulates `input_log` to validate times.
+Client access only via `src/net/supabase.ts` (`getLeaderboard`, `submitLapTime`); it no-ops when env vars are missing.
 
 ## Deploy
 Push to `main` on GitHub → Cloudflare Pages/Netlify builds `npm run build`, output `dist/`. Set the two env vars in the host dashboard.
