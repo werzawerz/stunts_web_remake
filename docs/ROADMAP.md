@@ -16,6 +16,8 @@ with our own assets, deployed as a playable web page with online lap times.
       ~6% of the originals' own figures); V cycles cars
 - [x] Original car models and names, read at runtime from the local Stunts files (`src/original/`);
       own stand-in model when the files are absent
+- [x] Original per-car cockpits (dashboard, roof, instruments, steering wheel, gear box) with live
+      needles, steering dot and gear knob, read at runtime from the local Stunts files
 
 ## Next (in order)
 1. **Racing** — start countdown, lap timer, per-tile checkpoints (no shortcuts), results screen,
@@ -31,7 +33,7 @@ with our own assets, deployed as a playable web page with online lap times.
    pipes and half-pipes, tunnels, bridges, chicanes, split corners, slalom, highway, crossroads,
    buildings (gas station, barn, office, windmill, ship, diner), coasts and angled hill slopes.
 6. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
-   jobs each original model has); per-car dashboards.
+   jobs each original model has); digital speed readouts in the cockpits that have them.
 7. **Track editor** — 30×30 grid editor like the original; save/share tracks via Supabase.
 8. **Replays and ghosts** — the deterministic simulation already allows input-log replays.
 9. **Sound** — engine pitch from rpm, skids, crash.
@@ -48,5 +50,6 @@ with our own assets, deployed as a playable web page with online lap times.
 ## Principles
 - Faithful to the original: check mechanics on wiki.stunts.hu and measurements in the original
   files; compare against screenshots.
-- Own assets only: original files are read locally for measurements and never committed or shipped.
+- Original files stay out of the repo: they are read at runtime from the owner's local copy
+  (measurements, car models, cockpits); our own stand-ins are used when they are absent.
 - Deterministic simulation (fixed 60 Hz, pure functions of input) so replays and validation work.
