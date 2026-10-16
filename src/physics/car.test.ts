@@ -134,6 +134,12 @@ describe('Stunts-style car model', () => {
     expect(r.s.pos[0]).toBeLessThan(T(16));
   });
 
+  it('drops off the top of the loop when entered slowly, even on full throttle', () => {
+    const r = run(sample, [T(14.4), T(5.5), RIDE], 'E', 16, 60 * 8, INPUT.Throttle);
+    expect(r.maxU).toBeLessThan(55);
+    expect(r.s.pos[0]).toBeLessThan(T(16)); // never came out the far side
+  });
+
   it('climbs the ramp onto the elevated section', () => {
     const r = run(sample, [T(23.5), T(7.3), RIDE], 'N', 20, 60 * 8, INPUT.Throttle);
     expect(r.s.crashed).toBe(false);

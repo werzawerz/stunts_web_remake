@@ -200,6 +200,12 @@ const ENGINE_BRAKE = 2.2;
 const CREST_STICK = 3;
 
 /**
+ * Radius (m) of the loop (the original's is 975 units tall, 1/5 ft each). Upside down in it, the
+ * road only holds the car while v²/r exceeds the gravity pulling it off; slower, it falls off.
+ */
+const LOOP_RADIUS = (975 / 2) * (0.3048 / 5);
+
+/**
  * Hitting a wall or object wrecks the car only when the front of the car hits it, faster than
  * WALL_CRASH_SPEED (m/s, ~22 km/h) into it and at more than ~30 degrees. Glancing hits and hits
  * with the side or rear scrape along instead: in the original, cars only crash at obstacles when
@@ -307,6 +313,10 @@ function groundStep(
   const mu = spec.surfaceGrip[s.surface] ?? 1;
   // Basis aligned with the road; guided pieces (loops) set the heading themselves.
   const guide = here.hit.guide;
+  if (guide && n[2] < 0 && dot(s.vel, s.vel) < LOOP_RADIUS * G * -n[2]) {
+    s.grounded = false;
+    return;
+  }
   let fwd = normalize(sub(fwd0, scale(n, dot(fwd0, n))));
   if (guide) fwd = alongGuide(guide, fwd, n);
   let right = cross(fwd, n);
