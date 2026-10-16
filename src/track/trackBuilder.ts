@@ -681,8 +681,15 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
       // Original pieces: follow the original road, using its centre-line dashes (our own path can
       // be off, e.g. on banks). The end points stay ours so the route still connects.
       if (dashes && info.kind !== 'loop') followDashes(pieces.slice(firstPiece), dashes);
-      if (original && ELEMENT_SHAPES[code]?.shape === 'hpip') {
+      const el = ELEMENT_SHAPES[code];
+      if (original && el?.shape === 'hpip') {
         for (const piece of pieces.slice(firstPiece)) piece.path = aroundPipeBlock(piece.path);
+      }
+      if (original && el?.shape === 'barr') {
+        for (const piece of pieces.slice(firstPiece)) piece.path = throughSlalom(piece.path, c, el.rot);
+      }
+      if (original && (el?.shape === 'gwro' || el?.shape === 'wroa')) {
+        for (const piece of pieces.slice(firstPiece)) piece.path = ontoCarriageway(piece.path, c, el.rot, el.shape === 'gwro');
       }
     }
   }
@@ -867,6 +874,56 @@ function aroundPipeBlock(path: [number, number, number][]): [number, number, num
       a[1] + (b[1] - a[1]) * t + r[1] * 6.1 * k,
       a[2] + (b[2] - a[2]) * t + 3.8 * k,
     ]);
+  }
+  return out;
+}
+
+/**
+ * Highways (wroa) have two carriageways either side of a median; the entry piece (gwro) widens the
+ * road from its narrow end (shape z = -514) and the median starts in the middle of it. Move the
+ * route onto one carriageway (240 units out; always the east or north one, so both ends of a
+ * highway agree), drifting over gradually along the entry piece.
+ */
+function ontoCarriageway(
+  path: [number, number, number][],
+  c: [number, number],
+  rot: number,
+  entry: boolean,
+): [number, number, number][] {
+  const zDir: [number, number] = [[0, 1, 0, -1][rot & 3]!, [1, 0, -1, 0][rot & 3]!];
+  const side: [number, number] = Math.abs(zDir[0]) > 0.5 ? [0, 1] : [1, 0];
+  const a = path[0]!;
+  const b = path[path.length - 1]!;
+  const out: [number, number, number][] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    const p: [number, number, number] = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const zl = ((p[0] - c[0]) * zDir[0] + (p[1] - c[1]) * zDir[1]) / UNIT;
+    const k = entry ? smooth(Math.min(1, Math.max(0, (zl + 514) / 764))) : 1;
+    out.push([p[0] + side[0] * 240 * UNIT * k, p[1] + side[1] * 240 * UNIT * k, p[2]]);
+  }
+  return out;
+}
+
+/**
+ * Slalom (barr): one barrier blocks shape x 23..97 at z -271..-241, the other x -97..-23 at
+ * z 241..271. Weave the route past each on its open side (60 units out).
+ */
+function throughSlalom(path: [number, number, number][], c: [number, number], rot: number): [number, number, number][] {
+  const sin = [0, 1, 0, -1][rot & 3]!;
+  const cos = [1, 0, -1, 0][rot & 3]!;
+  const zDir: [number, number] = [sin, cos];
+  const xDir: [number, number] = [cos, -sin];
+  const bump = (d: number): number => 1 - smooth(Math.min(1, Math.max(0, (Math.abs(d) - 40) / 160)));
+  const a = path[0]!;
+  const b = path[path.length - 1]!;
+  const out: [number, number, number][] = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    const p: [number, number, number] = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const zl = ((p[0] - c[0]) * zDir[0] + (p[1] - c[1]) * zDir[1]) / UNIT;
+    const xl = (-60 * bump(zl + 256) + 60 * bump(zl - 256)) * UNIT;
+    out.push([p[0] + xDir[0] * xl, p[1] + xDir[1] * xl, p[2]]);
   }
   return out;
 }

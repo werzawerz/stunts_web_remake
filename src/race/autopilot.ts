@@ -8,6 +8,10 @@ import { quatRotate } from '../physics/vec';
  */
 
 const G = 9.81;
+/** Speed (m/s) to crest a hill top or ramp lip at when a bend follows: the car lands in time. */
+const CREST_SPEED = 14;
+/** Bends this far (m) past a crest count as following it. */
+const CREST_REACH = 60;
 
 export class Autopilot {
   private idx = 0;
@@ -96,6 +100,9 @@ export class Autopilot {
     const step = 8;
     let prev = this.ahead(0);
     let cur = this.ahead(step);
+    // Where the road tips over a crest (a hill top, a ramp lip) into a real descent (> 6 m): fast
+    // cars fly off there and can't steer until they land.
+    let crest = -1;
     for (let d = 2 * step; d <= 90; d += step) {
       const next = this.ahead(d);
       const ax = cur[0] - prev[0];
@@ -109,6 +116,9 @@ export class Autopilot {
       const steep = Math.abs(cur[2] - prev[2]) > la * 0.5 || Math.abs(next[2] - cur[2]) > lb * 0.5;
       // Bends beyond a loop are for later: a loop has to be entered fast or the car falls off.
       if (steep) break;
+      if (crest < 0 && la > 0.5 && lb > 0.5 && (cur[2] - prev[2]) / la - (next[2] - cur[2]) / lb > 0.15 && this.ahead(d + 2 * step)[2] < cur[2] - 6) {
+        crest = d - step;
+      }
       if (la > 0.5 && lb > 0.5 && !this.guidedAhead(d - step)) {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
@@ -117,6 +127,11 @@ export class Autopilot {
           // Allow for braking distance to reach that speed by the bend.
           const reach = Math.sqrt(vCorner * vCorner + 2 * this.spec.brakeDecel * 0.8 * (d - step));
           if (reach < limit) limit = reach;
+          if (crest >= 0 && d - crest < CREST_REACH && turn > 0.05) {
+            const v = Math.min(vCorner, CREST_SPEED);
+            const atCrest = Math.sqrt(v * v + 2 * this.spec.brakeDecel * 0.8 * Math.max(0, crest - step));
+            if (atCrest < limit) limit = atCrest;
+          }
         }
       }
       prev = cur;

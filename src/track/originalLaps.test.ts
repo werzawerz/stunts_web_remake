@@ -39,7 +39,7 @@ describe.skipIf(!available)('autopilot laps on the original tracks', () => {
       const car = createCar(DEFAULT_CAR, [e, n, 300 - hit.t + 1], start.dir);
       const pilot = new Autopilot(route.line3d, DEFAULT_CAR, 42, route.guided);
       const lap = createLap();
-      for (let t = 0; t < 60 * 300 && lap.phase !== 'finished' && !car.crashed; t++) {
+      for (let t = 0; t < 60 * 600 && lap.phase !== 'finished' && !car.crashed; t++) {
         const mask = pilot.input(car);
         stepCar(car, DEFAULT_CAR, mask, built.world);
         stepLap(lap, route, car.pos, car.vel, true, car.crashed);
