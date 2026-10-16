@@ -199,8 +199,14 @@ const ENGINE_BRAKE = 2.2;
  */
 const CREST_STICK = 3;
 
-/** Closing speed (m/s) above which hitting a wall or object wrecks the car (~22 km/h). */
+/**
+ * Hitting a wall or object wrecks the car only when the front of the car hits it, faster than
+ * WALL_CRASH_SPEED (m/s, ~22 km/h) into it and at more than ~30 degrees. Glancing hits and hits
+ * with the side or rear scrape along instead: in the original, cars only crash at obstacles when
+ * the front wheels hit them (wiki.stunts.hu "Car parameters"), and they can grind along a wall.
+ */
 const WALL_CRASH_SPEED = 6;
+const WALL_CRASH_SIN = 0.5;
 
 /**
  * Sweep the car's corners from `from` to `to` against walls and objects. Returns the corrected
@@ -219,7 +225,7 @@ function hitWalls(
 ): { pos: Vec3; vel: Vec3 } | null {
   const hw = spec.halfTrack * 1.15;
   const hl = (spec.wheelbase / 2) * 1.45;
-  let first: { t: number; n: Vec3; tag?: string } | null = null;
+  let first: { t: number; n: Vec3; tag?: string; front: boolean } | null = null;
   for (const [sx, sy] of [
     [1, 1],
     [-1, 1],
@@ -231,14 +237,14 @@ function hitWalls(
   ] as const) {
     const off = add(add(scale(right, sx * hw), scale(fwd, sy * hl)), scale(up, 0.2));
     const hit = world.sweep(add(from, off), add(to, off));
-    if (hit && (!first || hit.t < first.t)) first = hit;
+    if (hit && (!first || hit.t < first.t)) first = { ...hit, front: sy === 1 };
   }
   if (!first) return null;
   // Push back along the wall's horizontal normal.
   let n: Vec3 = [first.n[0], first.n[1], 0];
   n = length(n) > 0.2 ? normalize(n) : first.n;
   const closing = -dot(vel, n);
-  if (closing > WALL_CRASH_SPEED) {
+  if (first.front && closing > WALL_CRASH_SPEED && closing > length(vel) * WALL_CRASH_SIN) {
     crash(s, 'hit an obstacle');
     s.crashDetail = first.tag ?? '';
     return { pos: from, vel: [0, 0, 0] };
@@ -247,7 +253,7 @@ function hitWalls(
   const pos = add(from, scale(sub(to, from), t));
   // Scrape along: lose the speed into the wall plus a bit of friction.
   const along = sub(vel, scale(n, Math.min(0, dot(vel, n)) * 1.3));
-  return { pos, vel: scale(along, 0.85) };
+  return { pos, vel: scale(along, 0.97) };
 }
 
 function crash(s: CarState, reason: string): void {

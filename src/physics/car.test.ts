@@ -175,6 +175,19 @@ describe('walls and obstacles', () => {
     [-20, wallAt, 0, 20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 3],
   );
 
+  it('scrapes along a wall hit at a shallow angle instead of crashing', () => {
+    // A wall slanting 20 degrees across the car's path (like a highway median's side).
+    const k = Math.tan((20 * Math.PI) / 180);
+    const slanted = new CollisionWorld(
+      [-S2, -S2, 0.01, S2, -S2, 0.01, S2, S2, 0.01, -S2, -S2, 0.01, S2, S2, 0.01, -S2, S2, 0.01],
+      [0, 0],
+      [],
+      [3, 0, 0, 3 - 200 * k, 200, 0, 3 - 200 * k, 200, 3, 3, 0, 0, 3 - 200 * k, 200, 3, 3, 0, 3],
+    );
+    const { s } = run(slanted, [0, 0, 0.61], 'N', 25, 60 * 3, INPUT.Throttle);
+    expect(s.crashed, s.crashReason).toBe(false);
+  });
+
   it('landing crashes depend on the angle, not the height (as in the original)', () => {
     // Dropped from 60 m: almost straight down crashes, a fast shallow flight lands fine.
     const steep = run(slabWithWall, [0, -400, 60], 'N', 3, 60 * 4, 0);
