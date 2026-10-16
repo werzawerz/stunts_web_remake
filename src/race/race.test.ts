@@ -49,6 +49,19 @@ describe('route', () => {
   });
 });
 
+describe('route tiles passed twice', () => {
+  it('counts a shared tile (elevated road over a ground road) as the element due next', () => {
+    // Pretend element 2's tile is passed again later as element 7.
+    const k = [...route.cellIndex.entries()].find(([, l]) => l[0] === 2)![0];
+    const shared: Route = { ...route, cellIndex: new Map(route.cellIndex).set(k, [2, 7]) };
+    const [e, n] = at(2);
+    expect(elementAt(shared, e, n, 2)).toBe(2); // reaching it the first time
+    expect(elementAt(shared, e, n, 3)).toBe(2); // still on it
+    expect(elementAt(shared, e, n, 7)).toBe(7); // the second pass
+    expect(elementAt(shared, e, n, 9)).toBe(7); // revisiting afterwards
+  });
+});
+
 describe('lap and penalty (original rules)', () => {
   it('a clean lap finishes with no penalty', () => {
     const s = drive(route, all());

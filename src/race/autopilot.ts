@@ -17,6 +17,8 @@ export class Autopilot {
     private readonly spec: CarSpec,
     /** Top speed the driver aims for on straights (m/s). */
     private readonly cruise = 42,
+    /** Per line point: guided (loops steer the car themselves; their bends need no slowing). */
+    private readonly guided: boolean[] = [],
   ) {}
 
   /** Index of the line point closest to the car, searching forward from the last one. */
@@ -34,6 +36,22 @@ export class Autopilot {
       }
     }
     this.idx = best;
+  }
+
+  /** Whether the line `dist` metres ahead is on a guided piece. */
+  private guidedAhead(dist: number): boolean {
+    const n = this.line.length;
+    let i = this.idx;
+    let left = dist;
+    for (let k = 0; k < n; k++) {
+      const a = this.line[i]!;
+      const b = this.line[(i + 1) % n]!;
+      const seg = Math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2);
+      if (seg >= left) return this.guided[i] === true;
+      left -= seg;
+      i = (i + 1) % n;
+    }
+    return false;
   }
 
   /** Point `dist` metres further along the line from the current index. */
@@ -89,7 +107,9 @@ export class Autopilot {
       // Climbing or diving road (a loop seen from above looks like a hairpin): not a bend to slow
       // down for. Loops and jumps want speed.
       const steep = Math.abs(cur[2] - prev[2]) > la * 0.5 || Math.abs(next[2] - cur[2]) > lb * 0.5;
-      if (la > 0.5 && lb > 0.5 && !steep) {
+      // Bends beyond a loop are for later: a loop has to be entered fast or the car falls off.
+      if (steep) break;
+      if (la > 0.5 && lb > 0.5 && !this.guidedAhead(d - step)) {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
           const radius = step / turn;

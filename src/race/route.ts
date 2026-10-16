@@ -10,12 +10,17 @@ export interface Route {
   dirs: [number, number][];
   /** True when the route returns to start/finish. */
   closed: boolean;
-  /** Tile key → element index (elements cover whole tiles, like the original's penalty check). */
-  cellIndex: Map<number, number>;
+  /**
+   * Tile key → element indices in driving order (elements cover whole tiles, like the original's
+   * penalty check). A tile can belong to two elements, e.g. an elevated road over a ground road.
+   */
+  cellIndex: Map<number, number[]>;
   /** Start line: centre (east, north) and driving direction. */
   line: { centre: [number, number]; dir: [number, number] };
   /** Centre line of the whole lap in driving order (east, north, up), for drivers and opponents. */
   line3d: [number, number, number][];
+  /** Per line3d point: on a guided piece (loop), where the car is steered for the driver. */
+  guided: boolean[];
 }
 
 const cellKey = (x: number, z: number): number => x * 1000 + z;
@@ -101,18 +106,29 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     dirs.push(...best.dirs);
   }
 
-  const cellIndex = new Map<number, number>();
-  ordered.forEach((p, i) => p.cells.forEach(([x, z]) => cellIndex.set(cellKey(x, z), i)));
+  const cellIndex = new Map<number, number[]>();
+  ordered.forEach((p, i) =>
+    p.cells.forEach(([x, z]) => {
+      const k = cellKey(x, z);
+      const list = cellIndex.get(k);
+      if (list) list.push(i);
+      else cellIndex.set(k, [i]);
+    }),
+  );
   const [cx, cz] = start.anchor;
   // Centre line in driving order: each piece's path, reversed when driven from its far end.
   const line3d: [number, number, number][] = [];
+  const guided: boolean[] = [];
   ordered.forEach((p, i) => {
     const d = dirs[i]!;
     const forward = (p.ends[1][0] - p.ends[0][0]) * d[0] + (p.ends[1][1] - p.ends[0][1]) * d[1] >= 0;
     const pts = forward ? p.path : [...p.path].reverse();
     for (const q of pts) {
       const last = line3d[line3d.length - 1];
-      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.5) line3d.push(q);
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.5) {
+        line3d.push(q);
+        guided.push(p.kind === 'loop');
+      }
     }
   });
   return {
@@ -121,11 +137,18 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     closed,
     cellIndex,
     line3d,
+    guided,
     line: { centre: [(cx + 0.5) * TILE, (cz + 0.5) * TILE], dir: sd },
   };
 }
 
-/** Index of the route element under a position, or -1 when off the route. */
-export function elementAt(route: Route, e: number, n: number): number {
-  return route.cellIndex.get(cellKey(Math.floor(e / TILE), Math.floor(n / TILE))) ?? -1;
+/**
+ * Index of the route element under a position, or -1 when off the route. Where the route passes a
+ * tile twice, the first element at or after `expected` - 1 (the one just reached, or the next one
+ * due), else the last one.
+ */
+export function elementAt(route: Route, e: number, n: number, expected = 0): number {
+  const list = route.cellIndex.get(cellKey(Math.floor(e / TILE), Math.floor(n / TILE)));
+  if (!list) return -1;
+  return list.find((i) => i >= expected - 1) ?? list[list.length - 1]!;
 }

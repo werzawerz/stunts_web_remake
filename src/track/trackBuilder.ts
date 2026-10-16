@@ -681,6 +681,9 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
       // Original pieces: follow the original road, using its centre-line dashes (our own path can
       // be off, e.g. on banks). The end points stay ours so the route still connects.
       if (dashes && info.kind !== 'loop') followDashes(pieces.slice(firstPiece), dashes);
+      if (original && ELEMENT_SHAPES[code]?.shape === 'hpip') {
+        for (const piece of pieces.slice(firstPiece)) piece.path = aroundPipeBlock(piece.path);
+      }
     }
   }
 
@@ -842,6 +845,30 @@ function nearestOnPath(path: [number, number, number][], p: V3): { dist: number;
     run += Math.sqrt(len2);
   }
   return best;
+}
+
+/**
+ * The pipe obstacle (hpip) fills the pipe's floor 2.1 m high for 9 m around the tile centre;
+ * cars get past on the steep upper wall. Swerve the route up there (6.1 m out, 3.8 m up).
+ */
+function aroundPipeBlock(path: [number, number, number][]): [number, number, number][] {
+  const a = path[0]!;
+  const b = path[path.length - 1]!;
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const f: [number, number] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+  const r: [number, number] = [f[1], -f[0]];
+  const out: [number, number, number][] = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    const s = t * len - len / 2; // metres from the tile centre
+    const k = 1 - smooth(Math.min(1, Math.max(0, (Math.abs(s) - 9) / 15)));
+    out.push([
+      a[0] + (b[0] - a[0]) * t + r[0] * 6.1 * k,
+      a[1] + (b[1] - a[1]) * t + r[1] * 6.1 * k,
+      a[2] + (b[2] - a[2]) * t + 3.8 * k,
+    ]);
+  }
+  return out;
 }
 
 /** Re-route the pieces of one element through the original centre-line dashes nearest to each. */
