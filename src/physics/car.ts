@@ -215,13 +215,12 @@ const CREST_STICK = 3;
 const LOOP_RADIUS = (975 / 2) * (0.3048 / 5);
 
 /**
- * Hitting a wall or object wrecks the car only when the front of the car hits it, faster than
- * WALL_CRASH_SPEED (m/s, ~22 km/h) into it and at more than ~30 degrees. Glancing hits and hits
- * with the side or rear scrape along instead: in the original, cars only crash at obstacles when
- * the front wheels hit them (wiki.stunts.hu "Car parameters"), and they can grind along a wall.
+ * As in the original, the car crashes when its front hits a wall or object (wiki.stunts.hu "Car
+ * parameters": cars only crash at obstacles when the front wheels hit them), at any angle, from a
+ * walking pace into it (m/s). Hits with the side or rear scrape along: the original's cars can
+ * grind along a wall. (Scraping front hits left the car pinned against bridge walls.)
  */
-const WALL_CRASH_SPEED = 6;
-const WALL_CRASH_SIN = 0.5;
+const WALL_CRASH_SPEED = 2;
 
 /**
  * Sweep the car's corners from `from` to `to` against walls and objects. Returns the corrected
@@ -259,7 +258,7 @@ function hitWalls(
   let n: Vec3 = [first.n[0], first.n[1], 0];
   n = length(n) > 0.2 ? normalize(n) : first.n;
   const closing = -dot(vel, n);
-  if (first.front && closing > WALL_CRASH_SPEED && closing > length(vel) * WALL_CRASH_SIN) {
+  if (first.front && closing > WALL_CRASH_SPEED) {
     crash(s, 'hit an obstacle');
     s.crashDetail = first.tag ?? '';
     return { pos: from, vel: [0, 0, 0] };

@@ -159,7 +159,7 @@ export class Autopilot {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
           const radius = step / turn;
-          const vCorner = Math.sqrt(0.75 * grip * G * radius);
+          const vCorner = Math.sqrt(0.68 * grip * G * radius);
           // Allow for braking distance to reach that speed by the bend.
           const reach = Math.sqrt(vCorner * vCorner + 2 * this.spec.brakeDecel * 0.8 * (d - step));
           if (reach < limit) limit = reach;

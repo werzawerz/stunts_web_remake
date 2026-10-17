@@ -198,17 +198,36 @@ describe('walls and obstacles', () => {
     [-20, wallAt, 0, 20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 0, 20, wallAt, 3, -20, wallAt, 3],
   );
 
-  it('scrapes along a wall hit at a shallow angle instead of crashing', () => {
-    // A wall slanting 20 degrees across the car's path (like a highway median's side).
-    const k = Math.tan((20 * Math.PI) / 180);
-    const slanted = new CollisionWorld(
+  /** A wall from (e0, n0) to (e1, n1), 3 m high, on the paved slab. */
+  const wallWorld = (e0: number, n0: number, e1: number, n1: number): CollisionWorld =>
+    new CollisionWorld(
       [-S2, -S2, 0.01, S2, -S2, 0.01, S2, S2, 0.01, -S2, -S2, 0.01, S2, S2, 0.01, -S2, S2, 0.01],
       [0, 0],
       [],
-      [3, 0, 0, 3 - 200 * k, 200, 0, 3 - 200 * k, 200, 3, 3, 0, 0, 3 - 200 * k, 200, 3, 3, 0, 3],
+      [e0, n0, 0, e1, n1, 0, e1, n1, 3, e0, n0, 0, e1, n1, 3, e0, n0, 3],
     );
-    const { s } = run(slanted, [0, 0, 0.61], 'N', 25, 60 * 3, INPUT.Throttle);
-    expect(s.crashed, s.crashReason).toBe(false);
+
+  it('crashes when the front hits a wall even at a shallow angle (a bridge wall), as in the original', () => {
+    // A wall slanting 20 degrees across the car's path.
+    const k = Math.tan((20 * Math.PI) / 180);
+    const { s } = run(wallWorld(3, 0, 3 - 200 * k, 200), [0, 0, 0.61], 'N', 25, 60 * 3, INPUT.Throttle);
+    expect(s.crashReason).toBe('hit an obstacle');
+  });
+
+  it('scrapes along a wall touched with the side or rear', () => {
+    // Sliding sideways (east) into a wall that leans away towards the front: the rear corner
+    // touches first, and the car grinds along it.
+    const c = createCar(DEFAULT_CAR, [0.6, 0, 0.61], 'N', 15);
+    c.vel = [4, 15, 0];
+    const w = wallWorld(1.7, -3, 11.7, 97);
+    let touched = false;
+    for (let t = 0; t < 60 * 2; t++) {
+      const before = c.vel[0];
+      stepCar(c, DEFAULT_CAR, 0, w);
+      if (c.vel[0] < before - 1) touched = true;
+    }
+    expect(touched).toBe(true);
+    expect(c.crashed, c.crashReason).toBe(false);
   });
 
   it('landing crashes depend on the angle, not the height (as in the original)', () => {
