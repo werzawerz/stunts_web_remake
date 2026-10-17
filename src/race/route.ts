@@ -79,6 +79,14 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     return jump ? [{ q: jump.q, end: jump.end }] : [];
   };
 
+  /** Horizontal unit direction of a piece's road at one end, pointing into the piece. */
+  const inward = (q: TrackPiece, endIdx: number): [number, number] => {
+    const pts = endIdx === 0 ? q.path : [...q.path].reverse();
+    const a = pts[0]!;
+    const b = pts.find((p) => Math.hypot(p[0] - a[0], p[1] - a[1]) > 1) ?? pts[pts.length - 1]!;
+    return unit([a[0], a[1]], [b[0], b[1]]);
+  };
+
   const walk = (point: [number, number]): boolean => {
     if (--budget < 0) return false;
     if (ordered.length > 2 && near(point, startEntry)) return true;
@@ -87,6 +95,12 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
       if (used.has(q)) continue;
       progressed = true;
       const entry = q.ends[0] === end ? 0 : 1;
+      // No U-turns: at a fork, the branch that heads back the way we came isn't a way on.
+      const last = ordered[ordered.length - 1]!;
+      const lastExit = last.ends[0] === point || near(last.ends[0], point) ? 0 : 1;
+      const out = inward(last, lastExit);
+      const into = inward(q, entry);
+      if (out[0] * into[0] + out[1] * into[1] > 0.3) continue;
       used.add(q);
       ordered.push(q);
       dirs.push(unit(q.ends[entry]!, q.ends[1 - entry]!));
