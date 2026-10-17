@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CARS, createCar, DEFAULT_CAR, INPUT, stepCar } from '../physics/car';
+import { SURFACE } from '../physics/collision';
 import { TILE } from './constants';
 import { parseResources, parseShape, unpack, type Shape } from '../original/formats';
 import { findStart } from './start';
@@ -73,6 +74,30 @@ describe.skipIf(!available)('Default hill (user report: crash at the bottom of t
       expect(car.crashed, `v0 ${v0}: ${car.crashReason} ${car.crashDetail ?? ''}`).toBe(false);
       // Like in the original, fast cars fly off the top; the landing isn't steep enough to crash.
       if (v0 >= 30) expect(air, `v0 ${v0}: ticks in the air`).toBeGreaterThan(30);
+    }
+  });
+});
+
+describe.skipIf(!available)('roads on hill slopes (user report: road missing near the top)', () => {
+  it('lie on the slope all the way up, never under it', () => {
+    const shapes = loadShapes();
+    for (const name of ['DEFAULT', 'BERNIES', 'CHERRIS', 'HELENS', 'JOES', 'SKIDS']) {
+      const track = parseTrk(new Uint8Array(readFileSync(`${DIR}/${name}.TRK`)));
+      const world = buildTrack(track, shapes).world;
+      for (let x = 0; x < 30; x++) {
+        for (let z = 0; z < 30; z++) {
+          const t = track.terrain[x]![z]!;
+          const code = track.elements[x]![z]!;
+          if (t < 0x07 || t > 0x0a || (code !== 0x04 && code !== 0x05)) continue;
+          // Along the road's centre line, from just inside one tile edge to the other.
+          for (let k = 0.05; k < 1; k += 0.05) {
+            const e = (x + (code === 0x05 ? k : 0.5)) * TILE;
+            const n = (z + (code === 0x04 ? k : 0.5)) * TILE;
+            const hit = world.raycast([e, n, 300], [0, 0, -1], 400);
+            expect(hit?.surface, `${name} (${x},${z}) at ${k.toFixed(2)}`).toBe(SURFACE.Paved);
+          }
+        }
+      }
     }
   });
 });

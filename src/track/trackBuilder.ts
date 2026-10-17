@@ -508,11 +508,11 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
    * hills; on a slope tile the original shears the element along the slope (a road follows it, and
    * a ramp built against the slope becomes a level road at hill height).
    */
-  const groundAt = (x: number, z: number): ((e: number, n: number) => number) => {
+  const groundAt = (x: number, z: number): Ground => {
     const t = decodeTerrain(track.terrain[x]?.[z] ?? 0);
     if (t.kind !== 'slope') {
       const b = baseHeight(x, z);
-      return () => b;
+      return { height: () => b };
     }
     const e0 = x * TILE;
     const n0 = z * TILE;
@@ -524,7 +524,15 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
       W: (e) => (e0 + TILE - e) / TILE,
     };
     const f = frac[t.ascent];
-    return (e, n) => HILL_HEIGHT * clamp(f(e, n));
+    // The original shapes reach a little past their tile (a road ~8 units at each end): pulled back
+    // onto the tile edge, every point stays on the slope's plane. Sheared with a clamp instead, the
+    // road came out less steep than the slope and sank under its top third.
+    const along = t.ascent === 'N' || t.ascent === 'S';
+    return {
+      height: (e, n) => HILL_HEIGHT * clamp(f(e, n)),
+      fit: (e, n) =>
+        along ? [e, Math.min(n0 + TILE, Math.max(n0, n))] : [Math.min(e0 + TILE, Math.max(e0, e)), n],
+    };
   };
 
   // Track elements. With the original shapes, each element is drawn from its original 3D shape
@@ -731,6 +739,14 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
 
 // ---- original shapes -------------------------------------------------------------------------
 
+/** The ground an element stands on: its height, and on slopes where its points must stay. */
+interface Ground {
+  height: (e: number, n: number) => number;
+  /** Keeps a point on the tile, where the slope's plane holds. */
+  fit?: (e: number, n: number) => [number, number];
+}
+const same = (e: number, n: number): [number, number] => [e, n];
+
 const COLORS: string[] = (materials as { colors: string[] }).colors;
 /** Materials of road surfaces and their markings (asphalt greys, yellow and white lines). */
 const ROAD_MATERIALS = new Set([18, 19, 20, 21, 22, 23, 24]);
@@ -754,7 +770,7 @@ function drawShape(
   paint: number,
   rot: number,
   c: [number, number],
-  ground: (e: number, n: number) => number,
+  ground: Ground,
   physics: boolean,
   dashes?: V3[],
 ): boolean {
@@ -768,10 +784,9 @@ function drawShape(
     const [x, y, z] = s.verts[i]!;
     const e = x * UNIT;
     const n = z * UNIT;
-    const we = c[0] + e * cos + n * sin;
-    const wn = c[1] - e * sin + n * cos;
+    const [we, wn] = (ground.fit ?? same)(c[0] + e * cos + n * sin, c[1] - e * sin + n * cos);
     // Lift slightly off the ground plane so roads never z-fight with it or let it win ray ties.
-    return [we, wn, ground(we, wn) + y * UNIT + 0.05 + lift];
+    return [we, wn, ground.height(we, wn) + y * UNIT + 0.05 + lift];
   };
   for (const prim of s.prims) {
     const color = parseInt((COLORS[prim.materials[paint] ?? prim.materials[0]!] ?? '#ff00ff').slice(1), 16);
@@ -951,7 +966,7 @@ function drawOriginalElement(
   shapes: Map<string, Shape>,
   code: number,
   c: [number, number],
-  ground: (e: number, n: number) => number,
+  ground: Ground,
 ): V3[] | null {
   const el = ELEMENT_SHAPES[code];
   if (!el?.shape || !shapes.has(el.shape)) return null;
