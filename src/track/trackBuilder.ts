@@ -295,7 +295,9 @@ function cornerPath(
  * passes run side by side instead of through each other; S-bends lead in and out on the centre line.
  * Returns [right, forward, height] samples.
  */
-export function loopSamples(ringSegs = 64, bendSegs = 16): Sample[] {
+const LOOP_BEND_SEGS = 16;
+
+export function loopSamples(ringSegs = 64, bendSegs = LOOP_BEND_SEGS): Sample[] {
   const R = 449 * UNIT;
   const H = 487.5 * UNIT;
   const D = 202 * UNIT;
@@ -313,10 +315,6 @@ export function loopSamples(ringSegs = 64, bendSegs = 16): Sample[] {
     out.push([D * (1 - smooth(t)), TILE * t, 0]);
   }
   return out;
-}
-
-function loopPath(c: [number, number], dir: Dir): Path {
-  return framePath(c, dir, loopSamples(), true);
 }
 
 /**
@@ -548,8 +546,8 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
       const original = dashes !== null;
       const firstPiece = pieces.length;
       const mb = original ? (info.kind === 'loop' ? keep : scrap) : main;
-      const road = (path: Path, surface: Surface, guided = false): Path => {
-        paintRoad(mb, path, surface, guided);
+      const road = (path: Path, surface: Surface, guided = false, paint = true): Path => {
+        if (paint) paintRoad(mb, path, surface, guided);
         const a = path.pts[0]!;
         const b = path.pts[path.pts.length - 1]!;
         const cells: [number, number][] = [];
@@ -630,10 +628,19 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
           });
           break;
         }
-        case 'loop':
-          // The car is guided through the whole loop piece, as you can't steer in the original's loop.
-          road(loopPath(c, along(info.axis)), 'paved', true);
+        case 'loop': {
+          // Only the ring guides the car, as you can't steer in the original's loop. The bends into
+          // and out of it (the exit is beside the entrance) are ordinary road you steer along, like
+          // the original's approach: guided, they pulled the car sideways on the flat.
+          const dir = along(info.axis);
+          const samples = loopSamples();
+          const bend = LOOP_BEND_SEGS + 1;
+          paintRoad(mb, framePath(c, dir, samples.slice(0, bend), true), 'paved', false);
+          paintRoad(mb, framePath(c, dir, samples.slice(bend - 1, samples.length - bend + 1), true), 'paved', true);
+          paintRoad(mb, framePath(c, dir, samples.slice(samples.length - bend), true), 'paved', false);
+          road(framePath(c, dir, samples, true), 'paved', true, false);
           break;
+        }
         case 'corner':
           road(cornerPath([x, z], info, h), info.surface);
           break;

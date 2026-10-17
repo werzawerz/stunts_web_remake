@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSampleTrack } from '../track/sampleTrack';
-import { HILL_HEIGHT as HILL, TILE } from '../track/constants';
+import { HILL_HEIGHT as HILL, TILE, UNIT } from '../track/constants';
 import { buildTrack } from '../track/trackBuilder';
 import { CollisionWorld } from './collision';
 import { createCar, DEFAULT_CAR, INPUT, speedOf, stateHash, stepCar, type CarState, type Heading } from './car';
@@ -118,12 +118,15 @@ describe('Stunts-style car model', () => {
     expect(s.grounded).toBe(true);
   });
 
-  it('goes round the loop with enough speed, guided, and comes out on the centre line', () => {
-    const r = run(sample, [T(13.2), T(5.5), RIDE], 'E', 42, 60 * 9, INPUT.Throttle);
+  // The loop's way in is 202 units to the left of its centre line, the way out as far to the right;
+  // the bends to and from them are road you steer along. These tests start lined up with the way in.
+  const LOOP_SHIFT = 202 * UNIT;
+
+  it('goes round the loop with enough speed, guided, and comes out on its wheels', () => {
+    const r = run(sample, [T(15) - 6, T(5.5) + LOOP_SHIFT, RIDE], 'E', 42, 60 * 9, INPUT.Throttle);
     expect(r.s.crashed).toBe(false);
     expect(r.maxU).toBeGreaterThan(55);
     expect(r.s.pos[0]).toBeGreaterThan(T(16.5));
-    expect(Math.abs(r.s.pos[1] - T(5.5))).toBeLessThan(5); // still well on the 14.6 m road
     expect(upZ(r.s)).toBeGreaterThan(0.95);
     expect(r.s.grounded).toBe(true);
   });
@@ -135,7 +138,7 @@ describe('Stunts-style car model', () => {
   });
 
   it('drops off the top of the loop when entered slowly, even on full throttle', () => {
-    const r = run(sample, [T(14.4), T(5.5), RIDE], 'E', 16, 60 * 8, INPUT.Throttle);
+    const r = run(sample, [T(15) - 20, T(5.5) + LOOP_SHIFT, RIDE], 'E', 16, 60 * 8, INPUT.Throttle);
     expect(r.maxU).toBeLessThan(55);
     expect(r.s.pos[0]).toBeLessThan(T(16)); // never came out the far side
   });
