@@ -1,4 +1,6 @@
 import type { Cockpit, Sprite } from '../original/cockpit';
+import { drawCracks, drawFireball, drawPleaseWait } from './crash';
+import { drawEvaluation, type EvaluationData } from './evaluation';
 
 /*
  * 320x200 overlay drawn with Canvas 2D: the race clock and messages, and the in-car view. When the
@@ -24,6 +26,15 @@ export interface HudState {
   crashed: boolean;
   crashReason: string;
   help: string;
+  /** Crash effects: windscreen cracks (in-car view), fireball (outside), "Please Wait...". */
+  crashFx?: {
+    cracks: [number, number][][] | null;
+    fire: { x: number; y: number; r: number } | null;
+    frame: number;
+    pleaseWait: boolean;
+  };
+  /** The evaluation screen, covering everything, when set. */
+  evaluation?: EvaluationData | null;
 }
 
 const formatTime = (t: number): string => {
@@ -60,6 +71,14 @@ export class Dashboard {
     c.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     c.clearRect(0, 0, SCREEN_W, SCREEN_H);
     c.imageSmoothingEnabled = false;
+    if (s.evaluation) {
+      drawEvaluation(c, s.evaluation);
+      return;
+    }
+    const fx = s.crashFx;
+    // The cracked windscreen is behind the dashboard, like the original's.
+    if (fx?.cracks && s.view === 'cockpit') drawCracks(c, fx.cracks);
+    if (fx?.fire && s.view !== 'cockpit') drawFireball(c, fx.fire.x, fx.fire.y, fx.fire.r, fx.frame);
     const original = s.view === 'cockpit' && this.original !== null;
     if (original) this.originalCockpit(s, this.original!);
     else if (s.view === 'cockpit') this.cockpit(s);
@@ -70,11 +89,7 @@ export class Dashboard {
     if (s.view === 'cockpit' && s.penaltySec > 0)
       this.text(`+${s.penaltySec}s`, SCREEN_W / 2 + 46, clockY, 9, '#fc5454', 'left');
     if (s.wrongWay && !s.crashed) this.text('Wrong Way', SCREEN_W / 2, 62, 12, '#fcfcfc', 'center');
-    if (s.crashed) {
-      this.text('CRASHED!', SCREEN_W / 2, 70, 20, '#fc2020', 'center');
-      this.text(s.crashReason.toUpperCase(), SCREEN_W / 2, 88, 9, '#fcfcfc', 'center');
-      this.text('PRESS R TO RESTART', SCREEN_W / 2, 102, 9, '#fcfc54', 'center');
-    }
+    if (fx?.pleaseWait) drawPleaseWait(c, SCREEN_W, SCREEN_H);
     if (s.help) this.text(s.help, SCREEN_W / 2, s.view === 'cockpit' ? 26 : SCREEN_H - 16, 7, '#fcfcfc', 'center');
   }
 

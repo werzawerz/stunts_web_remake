@@ -17,7 +17,10 @@ import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
 import { Dashboard, SCREEN_H, SCREEN_W, type HudState } from './ui/dashboard';
-import { ResultsPanel, typingInForm } from './ui/results';
+import { formatRaceTime, ResultsPanel, typingInForm } from './ui/results';
+import { crackLines } from './ui/crash';
+import { buttonRects, type EvalRow, type EvaluationData } from './ui/evaluation';
+import { bodyColour, Debris } from './render/debris';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
@@ -165,6 +168,85 @@ let lap: LapState = createLap();
 let inputLog: number[] = [];
 const results = new ResultsPanel(frame);
 
+// ---- crash sequence, as in the original: cracked windscreen / explosion, "Please Wait...", then
+// the evaluation screen with the track's fastest times and the run's figures.
+const MPH = 2.23694;
+/** This run's figures for the evaluation screen. */
+let runStats = { top: 0, distance: 0, seconds: 0 };
+let crash: {
+  at: number;
+  seed: number;
+  cracks: [number, number][][];
+  debris: Debris;
+  impact: number;
+  rows: EvalRow[] | null;
+} | null = null;
+let evalSelected = 1;
+const EVAL_BUTTONS = [
+  { label: ['View', 'Replay'], enabled: false }, // no replays yet
+  { label: ['Drive'], enabled: true },
+  { label: ['Main', 'Menu'], enabled: false }, // no main menu yet
+];
+const PLEASE_WAIT_AT = 3.0;
+const EVALUATION_AT = 3.8;
+
+function onCrash(impactSpeed: number, vel: Vec3): void {
+  const seed = (car.ticks * 2654435761) >>> 0;
+  const debris = new Debris(bodyColour(carObject), car.pos, vel, seed);
+  scene.add(debris.group);
+  crash = { at: performance.now(), seed, cracks: crackLines(seed, SCREEN_W, SCREEN_H), debris, impact: impactSpeed, rows: null };
+  evalSelected = 1;
+  const c = crash;
+  getLeaderboard(trackId)
+    .then((rows) => {
+      c.rows = (rows ?? []).map((r) => ({ name: r.player_name, car: r.car, time: formatRaceTime(r.time_ms / 1000) }));
+    })
+    .catch(() => (c.rows = []));
+}
+
+function clearCrash(): void {
+  if (!crash) return;
+  scene.remove(crash.debris.group);
+  crash.debris.dispose();
+  crash = null;
+}
+
+const crashSeconds = (): number => (crash ? (performance.now() - crash.at) / 1000 : 0);
+const evaluationShown = (): boolean => crash !== null && crashSeconds() >= EVALUATION_AT;
+
+function evaluationData(): EvaluationData | null {
+  if (!crash || !evaluationShown()) return null;
+  const entry = TRACKS[trackIndex]!;
+  return {
+    trackName: entry.id.startsWith('orig-') ? entry.id.slice(5) : entry.name,
+    rows: crash.rows,
+    elapsed: 'DNF',
+    averageMph: runStats.seconds > 0 ? (runStats.distance / runStats.seconds) * MPH : 0,
+    impactMph: crash.impact * MPH,
+    topMph: runStats.top * MPH,
+    buttons: EVAL_BUTTONS,
+    selected: evalSelected,
+  };
+}
+
+function evalActivate(i: number): void {
+  if (i === 1) resetCar(); // Drive
+}
+
+// Mouse: click a button on the evaluation screen.
+dash.canvas.addEventListener('click', (e) => {
+  if (!evaluationShown()) return;
+  const r = dash.canvas.getBoundingClientRect();
+  const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
+  const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+  buttonRects(EVAL_BUTTONS.length).forEach(([bx, by, bw, bh], i) => {
+    if (EVAL_BUTTONS[i]!.enabled && x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      evalSelected = i;
+      evalActivate(i);
+    }
+  });
+});
+
 function resetCar(): void {
   car = createCar(spec, startPose.pos, startPose.heading);
   prevPos = [...car.pos];
@@ -172,6 +254,8 @@ function resetCar(): void {
   camInit = false;
   lap = createLap();
   inputLog = [];
+  runStats = { top: 0, distance: 0, seconds: 0 };
+  clearCrash();
   results.hide();
 }
 
@@ -234,6 +318,17 @@ function loadScene(track: Track): void {
   scene.add(horizonView.group);
   renderer.setClearColor(horizonView.fogColor);
   resetCar();
+  spawnFromParam();
+}
+
+/** Debug: ?car=e,n,u,H,speed places the car (again after every track load). */
+function spawnFromParam(): void {
+  const p = new URLSearchParams(location.search).get('car');
+  if (!p) return;
+  const [e, n, u, hd, v] = p.split(',');
+  car = createCar(spec, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0));
+  prevPos = [...car.pos];
+  prevQuat = [...car.quat];
 }
 
 // ---- keys -----------------------------------------------------------------------------------
@@ -259,6 +354,20 @@ window.addEventListener('keydown', (e) => {
   sound.start();
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
+    return;
+  }
+  if (evaluationShown() && ['ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'NumpadEnter'].includes(e.code)) {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      const step = e.code === 'ArrowLeft' ? -1 : 1;
+      for (let k = 1; k < EVAL_BUTTONS.length; k++) {
+        const i = (evalSelected + step * k + EVAL_BUTTONS.length) % EVAL_BUTTONS.length;
+        if (EVAL_BUTTONS[i]!.enabled) {
+          evalSelected = i;
+          break;
+        }
+      }
+    } else evalActivate(evalSelected);
+    e.preventDefault();
     return;
   }
   if (e.code === 'KeyM') {
@@ -302,13 +411,6 @@ const trackParam = params.get('track') ?? 'orig-default';
   const i = TRACKS.findIndex((t) => t.id === trackParam);
   if (i > 0) void selectTrack(i, 1, true);
 }
-const carParam = params.get('car');
-if (carParam) {
-  const [e, n, u, hd, v] = carParam.split(',');
-  car = createCar(spec, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0));
-  prevPos = [...car.pos];
-  prevQuat = [...car.quat];
-}
 const viewParam = params.get('view');
 if (viewParam === 'chase' || viewParam === 'cockpit' || viewParam === 'free') view = viewParam;
 const camParam = params.get('cam');
@@ -338,7 +440,17 @@ renderer.setAnimationLoop((now) => {
     prevQuat = [...car.quat];
     const wasGrounded = car.grounded;
     const fallSpeed = -car.vel[2];
+    const wasCrashed = car.crashed;
+    const speedBefore = speedOf(car);
+    const velBefore: Vec3 = [...car.vel];
     stepCar(car, spec, mask, world);
+    if (!wasCrashed && car.crashed) onCrash(speedBefore, velBefore);
+    if (lap.phase === 'running' && !car.crashed) {
+      const v = speedOf(car);
+      runStats.top = Math.max(runStats.top, v);
+      runStats.distance += v * DT;
+      runStats.seconds += DT;
+    }
     // Thud on landing hard (but not for the little hops over bumps).
     if (!wasGrounded && car.grounded && !car.crashed && fallSpeed > 6) sound.bump((fallSpeed - 6) / 14);
     if (route) {
@@ -369,7 +481,12 @@ renderer.setAnimationLoop((now) => {
   len = Math.sqrt(len);
   for (let i = 0; i < 4; i++) qi[i] = qi[i]! / len;
   setObjectPose(carObject, pos, qi);
-  carObject.visible = view !== 'cockpit';
+  // An exploded car is gone: only its debris and the fireball remain.
+  carObject.visible = view !== 'cockpit' && !crash;
+  if (crash) {
+    crash.debris.update(frameDt);
+    crash.debris.group.visible = view !== 'cockpit'; // in the car you only see the cracked windscreen
+  }
 
   const fwd = quatRotate(qi, [0, 1, 0]);
   const up = quatRotate(qi, [0, 0, 1]);
@@ -403,6 +520,19 @@ renderer.setAnimationLoop((now) => {
 
   horizonView?.follow(camera);
   renderer.render(scene, camera);
+
+  let crashFx: HudState['crashFx'];
+  if (crash) {
+    const t = crashSeconds();
+    let fire: { x: number; y: number; r: number } | null = null;
+    if (t < PLEASE_WAIT_AT && view !== 'cockpit') {
+      const p = toThree([car.pos[0], car.pos[1], car.pos[2] + 0.6]);
+      const dist = p.distanceTo(camera.position);
+      p.project(camera);
+      if (p.z < 1) fire = { x: ((p.x + 1) / 2) * SCREEN_W, y: ((1 - p.y) / 2) * SCREEN_H, r: Math.min(30, Math.max(3, 180 / dist)) };
+    }
+    crashFx = { cracks: crash.cracks, fire, frame: Math.floor(now / 50), pleaseWait: t >= PLEASE_WAIT_AT && t < EVALUATION_AT };
+  }
   dash.draw({
     view,
     speedKmh: speedOf(car) * 3.6,
@@ -416,6 +546,8 @@ renderer.setAnimationLoop((now) => {
     finished: lap.phase === 'finished',
     crashed: car.crashed,
     crashReason: car.crashReason,
+    crashFx,
+    evaluation: evaluationData(),
     help:
       view === 'free'
         ? 'FREE CAM: WASD Q/E SHIFT, DRAG. C: BACK TO CAR'
