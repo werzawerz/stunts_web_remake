@@ -182,9 +182,15 @@ describe('falling off a bridge', () => {
     expect(s.crashReason).toBe('landed badly');
   });
 
-  it('driving straight off the end flies on and lands on its wheels', () => {
+  it('driving straight off the end onto the grass 20 m below crashes too (jumps land on road)', () => {
     const { s } = run(deck, [0, 60, 20.61], 'N', 25, 60 * 6, 0);
     expect(s.pos[1]).toBeGreaterThan(110);
+    expect(s.crashReason).toBe('fell off the track');
+  });
+
+  it('a small drop onto the grass is fine', () => {
+    const low = new CollisionWorld([-10, -500, 2, 10, -500, 2, 10, 100, 2, -10, -500, 2, 10, 100, 2, -10, 100, 2], [0, 0]);
+    const { s } = run(low, [0, 60, 2.61], 'N', 25, 60 * 4, 0);
     expect(s.crashed, s.crashReason).toBe(false);
   });
 });

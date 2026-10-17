@@ -210,6 +210,11 @@ const AIR_GRAVITY = 1.7;
  */
 const HARD_LANDING_MIN = 8;
 const HARD_LANDING_SLOPE = 1.7;
+/**
+ * Falling off the track onto the grass (off a bridge, an elevated road or a ramp's side) wrecks the
+ * car from about a 4 m drop (m/s into the ground): jumps are meant to land on road.
+ */
+const GRASS_HARD_LANDING = 12;
 /** Engine braking deceleration (m/s^2) at the rev limit when off the throttle in gear. */
 const ENGINE_BRAKE = 2.2;
 
@@ -526,6 +531,7 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
   else {
     const along = length(sub(s.vel, scale(n, -closing)));
     if (closing > HARD_LANDING_MIN && closing > along * HARD_LANDING_SLOPE) crash(s, 'hard landing');
+    else if (p.hit.surface === SURFACE.Grass && closing > GRASS_HARD_LANDING) crash(s, 'fell off the track');
   }
 
   const gap = p.hit.t - RAY_UP - spec.rideHeight;
