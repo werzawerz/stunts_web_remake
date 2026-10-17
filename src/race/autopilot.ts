@@ -130,6 +130,12 @@ export class Autopilot {
         }
         if (this.ahead(d + 2 * step)[2] < cur[2] - 6) crest = d - step;
       }
+      // A climb soon after a crest (a dip between ramps): flying over the dip slams the car into the
+      // rising side, so crest it slowly enough to follow the road down.
+      if (crest >= 0 && d - crest < CREST_REACH && lb > 0.5 && (next[2] - cur[2]) / lb > 0.2) {
+        const atCrest = Math.sqrt(CREST_SPEED * CREST_SPEED + 2 * this.spec.brakeDecel * 0.8 * Math.max(0, crest - step));
+        if (atCrest < limit) limit = atCrest;
+      }
       if (la > 0.5 && lb > 0.5 && !this.guidedAhead(d - step)) {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
