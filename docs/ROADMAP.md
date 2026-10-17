@@ -40,11 +40,11 @@ with our own assets, deployed as a playable web page with online lap times.
       from the local files, five signs; Option box, Escape opens it)
 - [x] Track selection like the original (overview of the track, fastest time, More Tracks list);
       finish screen in the evaluation style with name entry; the original explosion frames
+- [x] The Corvette ZR1's digital speedometer (original digit bitmaps, lit segments over the display)
 - [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
 
 ## Next (in order)
-5. Digital speed readouts in the cockpits that have them.
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
 ## Later

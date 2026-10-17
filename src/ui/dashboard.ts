@@ -148,6 +148,18 @@ export class Dashboard {
     drawNeedle(k.speedo, s.speedKmh / 1.609344 / 2.5);
     drawNeedle(k.revs, s.rpm / 128);
     this.sprite(k.wheel);
+    // The ZR1's display sits in the wheel hub: its digits go over the wheel.
+    if (k.digits) {
+      // Digital speedometer: mph, right-aligned, no leading zeros.
+      const mph = String(Math.min(999, Math.round(s.speedKmh / 1.609344)));
+      const n = k.digits.at.length;
+      const text = mph.padStart(n, ' ').slice(-n);
+      k.digits.at.forEach(([dx, dy], i) => {
+        const ch = text[i]!;
+        if (ch === ' ') return;
+        c.drawImage(k.digits!.glyphs[Number(ch)]!.image, ins.x + dx, ins.y + dy);
+      });
+    }
     // Steering dot on the wheel rim: right turns use the table, left turns mirror it.
     if (k.dot && k.dotPath.length > 1) {
       const step = Math.round(Math.abs(s.steer) * (k.dotPath.length - 1));

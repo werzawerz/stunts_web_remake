@@ -33,6 +33,12 @@ export interface Cockpit {
   dotPath: [number, number][];
   /** Needles in instrument-face coordinates; speed steps are 2.5 mph, rev steps 128 rpm. */
   speedo?: Needle;
+  /**
+   * Digital speedometer (the Corvette ZR1): digit bitmaps 0-9 (STDB dig0..dig9) and the screen
+   * positions of the digits in instrument-face coordinates (simd 12Eh.., where a needle's tips
+   * would be; the speedometer's count byte is then the number of digits).
+   */
+  digits?: { glyphs: Sprite[]; at: [number, number][] };
   revs?: Needle;
   /** Gear-knob positions in gear-box coordinates, one per forward gear. */
   knobs: [number, number][];
@@ -54,8 +60,8 @@ export function palette(): Promise<[number, number, number][] | null> {
   return palettePromise;
 }
 
-/** Bitmap resource → canvas sprite. Palette index 255 is transparent. */
-export function sprite(bytes: Uint8Array | undefined, pal: [number, number, number][]): Sprite | undefined {
+/** Bitmap resource → canvas sprite. Palette index 255 (and `clear`, if given) is transparent. */
+export function sprite(bytes: Uint8Array | undefined, pal: [number, number, number][], clear = 255): Sprite | undefined {
   if (!bytes || bytes.length < 16) return undefined;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const w = dv.getUint16(0, true);
@@ -79,7 +85,7 @@ export function sprite(bytes: Uint8Array | undefined, pal: [number, number, numb
       img.data[o] = r;
       img.data[o + 1] = g;
       img.data[o + 2] = b;
-      img.data[o + 3] = idx === 255 ? 0 : 255;
+      img.data[o + 3] = idx === 255 || idx === clear ? 0 : 255;
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -120,6 +126,11 @@ export function loadCockpit(carId: string): Promise<Cockpit | null> {
       const dv = new DataView(simd.buffer, simd.byteOffset, simd.byteLength);
       const dotPath: [number, number][] = [];
       for (let i = 0; i < 31; i++) dotPath.push([simd[0xea + i * 2]!, simd[0xeb + i * 2]!]);
+      // Lit segments only: the display's printed "888" shows through as the unlit ones.
+      const glyphs = Array.from({ length: 10 }, (_, d) => sprite(db.get(`dig${d}`), pal, 0));
+      const digital = glyphs.every((g) => g !== undefined);
+      const digitAt: [number, number][] = [];
+      if (digital) for (let i = 0; i < Math.min(simd[0x12c]!, 4); i++) digitAt.push([simd[0x12e + i * 2]!, simd[0x12f + i * 2]!]);
       const knobs: [number, number][] = [];
       for (let i = 0; i < 6; i++) knobs.push([dv.getInt16(0x20 + i * 4, true), dv.getInt16(0x22 + i * 4, true)]);
       return {
@@ -131,7 +142,8 @@ export function loadCockpit(carId: string): Promise<Cockpit | null> {
         dot: sprite(db.get('dot'), pal),
         knob: sprite(db.get('gnob'), pal),
         dotPath,
-        speedo: needle(simd, 0x128, 104),
+        speedo: digital ? undefined : needle(simd, 0x128, 104),
+        digits: digital ? { glyphs: glyphs as Sprite[], at: digitAt } : undefined,
         revs: needle(simd, 0x1fe, 128),
         knobs,
       };
