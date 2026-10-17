@@ -59,6 +59,19 @@ Original had AI opponents (Skid Vicious, Herr Otto Partz, Cherry Chassis, Bernie
 - Measured on the original: braking ~0.91 g × brake/256, constant and mass-independent; cornering ~1.2 g at grip 100h (skids from ~70 mph at that grip); top speed = sqrt(torque·ratio/drag); grass slowdown ∝ speed (~0.144/s).
 - Steering is keyboard digital with gradual wheel return; auto or manual gearbox.
 
+## Sound (measured on the original, Sound Blaster/AdLib output via the retrogames.cz emulator)
+The original has no samples: per-device drivers and voice files (`AD*/MT*/PC*/TD*` `.DRV/.VCE`,
+`GEENG.SFX`, `.KMS` music), formats undocumented. Our sounds are synthesised in `src/audio/sound.ts`.
+- Engine: one harmonic tone, fundamental ≈ rpm / 176 Hz (~5 Hz at 900 rpm idle, ~44 Hz at 7700);
+  strongest harmonics 5th and 8th, then 2nd, 13th, 1st, 18th, 21st. Same loudness on/off throttle;
+  off throttle the pitch just holds/sinks; downshifts while braking step the pitch up.
+- Tyre squeal only when cornering at the grip limit (full lock from ~70 mph on asphalt): ~522 Hz
+  warbling at ~26 Hz (sidebands 498/548) plus ~1045 Hz. No squeal when braking. With Sound Blaster,
+  no skid sound on grass/dirt/ice (a known bug of the original).
+- Crash: ~1.25 s broadband noise fading out, the squeal tone over its first ~0.85 s; engine stops.
+- Bump (car bouncing off the road / landing): ~0.25 s low rough noise, ~2× engine loudness.
+- Gear changes make no sound of their own (only the pitch jump).
+
 ## Open-source references
 - restunts (disassembly, for constants only): https://github.com/4d-stunts/restunts
 - csabahruska/stunts (Haskell remake, BSD-3): https://github.com/csabahruska/stunts

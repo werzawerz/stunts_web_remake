@@ -113,6 +113,8 @@ export interface CarState {
   surface: SurfaceId;
   /** Sideways slip speed (m/s): > ~2 means the tyres are sliding. */
   slip: number;
+  /** Cornering beyond the tyres' grip this tick (the original squeals then). */
+  sliding: boolean;
   crashed: boolean;
   crashReason: string;
   /** What the car crashed into, when known (debugging and messages; not part of the hash). */
@@ -138,6 +140,7 @@ export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0
     grounded: false,
     surface: SURFACE.Grass,
     slip: 0,
+    sliding: false,
     crashed: false,
     crashReason: '',
     ticks: 0,
@@ -381,6 +384,7 @@ function groundStep(
   const fix = Math.min(Math.abs(vs), gripAccel * h);
   vel = sub(vel, scale(right, Math.sign(vs) * fix));
   s.slip = Math.abs(dot(vel, right));
+  s.sliding = Math.abs(vs) > gripAccel * h;
 
   // --- move and follow the surface -----------------------------------------------------------
   const qBefore = s.quat;
@@ -452,6 +456,7 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
     if (wall) s.vel = wall.vel;
   }
   s.slip = 0;
+  s.sliding = false;
   // Attitude in the air: the nose slowly follows the flight path (only about the car's lateral
   // axis), so jumps land along their arc instead of flat or tumbling.
   {

@@ -21,6 +21,7 @@ import { ResultsPanel, typingInForm } from './ui/results';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
+import { CarSound } from './audio/sound';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
 const frame = document.createElement('div');
@@ -127,6 +128,7 @@ let trackGroup: THREE.Group | null = null;
 let horizonView: HorizonView | null = null;
 let world: CollisionWorld;
 let car: CarState;
+const sound = new CarSound();
 let prevPos: Vec3 = [0, 0, 0];
 let prevQuat: Quat = [1, 0, 0, 0];
 type View = HudState['view'];
@@ -253,11 +255,16 @@ async function selectTrack(i: number, step = 1, quiet = false): Promise<void> {
   }
 }
 window.addEventListener('keydown', (e) => {
+  // Browsers only allow sound after a user gesture: the first key press turns it on.
+  sound.start();
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
     return;
   }
-  if (e.code === 'KeyC') {
+  if (e.code === 'KeyM') {
+    sound.setMuted(!sound.muted);
+    flash(sound.muted ? 'SOUND OFF  (M)' : 'SOUND ON  (M)');
+  } else if (e.code === 'KeyC') {
     view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!;
     if (view === 'free') {
       const d = camera.getWorldDirection(new THREE.Vector3());
@@ -329,7 +336,11 @@ renderer.setAnimationLoop((now) => {
     const mask = lap.phase === 'finished' ? 0 : raw;
     prevPos = [...car.pos];
     prevQuat = [...car.quat];
+    const wasGrounded = car.grounded;
+    const fallSpeed = -car.vel[2];
     stepCar(car, spec, mask, world);
+    // Thud on landing hard (but not for the little hops over bumps).
+    if (!wasGrounded && car.grounded && !car.crashed && fallSpeed > 6) sound.bump((fallSpeed - 6) / 14);
     if (route) {
       const wasRunning = lap.phase === 'running';
       const moving = (mask & INPUT.Throttle) !== 0 || speedOf(car) > 0.5;
@@ -384,6 +395,12 @@ renderer.setAnimationLoop((now) => {
     fly.update(frameDt);
   }
 
+  // Tyre squeal where the original's would: at the grip limit, which its steering only reaches from
+  // ~70 mph (31 m/s) on asphalt at grip 1 (sooner on dirt and ice).
+  const mu = spec.grip * (spec.surfaceGrip[car.surface] ?? 1);
+  const skidding = car.grounded && car.sliding && speedOf(car) > 31 * Math.sqrt(mu);
+  sound.update({ rpm: car.rpm, skidding, crashed: car.crashed });
+
   horizonView?.follow(camera);
   renderer.render(scene, camera);
   dash.draw({
@@ -405,7 +422,7 @@ renderer.setAnimationLoop((now) => {
         : now < flashUntil
           ? flashText
           : car.ticks < 240
-            ? 'ARROWS DRIVE  R RESTART  T TRACK  V CAR  C CAMERA  P PIXELS'
+            ? 'ARROWS DRIVE  R RESTART  T TRACK  V CAR  C CAMERA  P PIXELS  M SOUND'
             : '',
   });
 });
