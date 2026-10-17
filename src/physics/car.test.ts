@@ -170,6 +170,25 @@ describe('Stunts-style car model', () => {
   });
 });
 
+describe('falling off a bridge', () => {
+  // A 20 m wide deck 20 m up, from n = -500 to n = 100, over grass.
+  const deck = new CollisionWorld(
+    [-10, -500, 20, 10, -500, 20, 10, 100, 20, -10, -500, 20, 10, 100, 20, -10, 100, 20],
+    [0, 0],
+  );
+  it('driving over the side tips the car over and it crashes, as in the original', () => {
+    const { s } = run(deck, [0, 0, 20.61], 'N', 25, 60 * 6, (t) => INPUT.Throttle | (t > 10 && t < 40 ? INPUT.Right : 0));
+    expect(s.crashed).toBe(true);
+    expect(s.crashReason).toBe('landed badly');
+  });
+
+  it('driving straight off the end flies on and lands on its wheels', () => {
+    const { s } = run(deck, [0, 60, 20.61], 'N', 25, 60 * 6, 0);
+    expect(s.pos[1]).toBeGreaterThan(110);
+    expect(s.crashed, s.crashReason).toBe(false);
+  });
+});
+
 describe('gearbox', () => {
   it('automatic shifts up by itself; manual stays in gear until A (GearUp) is pressed', () => {
     const drive = (manual: boolean, input: (t: number) => number): CarState => {
