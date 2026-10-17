@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { KeyboardInput } from './core/input';
 import { CARS, createCar, DT, INPUT, speedOf, stepCar, type CarSpec, type CarState } from './physics/car';
-import type { CollisionWorld } from './physics/collision';
+import { CollisionWorld } from './physics/collision';
 import { quatRotate, type Quat, type Vec3 } from './physics/vec';
 import { loadOriginalCarModels, type CarModel } from './original/carModels';
 import { loadCockpit } from './original/cockpit';
@@ -23,6 +23,8 @@ import { buttonRects, type EvalRow, type EvaluationData } from './ui/evaluation'
 import { bodyColour, Debris } from './render/debris';
 import { MainMenu, type MenuAction } from './ui/menu';
 import { loadPictures } from './original/screens';
+import { Showroom, type ShowroomCar } from './ui/showroom';
+import { loadCarDescription } from './original/carInfo';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
@@ -72,11 +74,14 @@ const vehicleParam = new URLSearchParams(location.search).get('vehicle');
 // The Porsche/March Indy by default.
 let carIndex = Math.max(0, CARS.findIndex((c) => c.id === (vehicleParam ?? 'indy')));
 let spec: CarSpec = CARS[carIndex]!;
+/** Paint job and gearbox chosen in the showroom. */
+let carPaint = 0;
+let manualGearbox = false;
 // Original car models and names, when the player's own Stunts files are available (dev: original_game/).
 let originalModels: Record<string, CarModel> = {};
 const buildCarObject = (): THREE.Group => {
   const model = originalModels[spec.id];
-  return model ? createCarMeshFromModel(model, spec) : createCarMesh(spec, PAINT[carIndex % PAINT.length]);
+  return model ? createCarMeshFromModel(model, spec, carPaint) : createCarMesh(spec, PAINT[carIndex % PAINT.length]);
 };
 const carName = (): string => originalModels[spec.id]?.name ?? spec.name;
 let carObject = buildCarObject();
@@ -249,8 +254,61 @@ const menu = new MainMenu({
 });
 void loadPictures('SDMSEL.PVS').then((p) => (menu.picture = p?.get('scrn') ?? null));
 
+// ---- car selection (the original's showroom) ---------------------------------------------------
+const FLAT = new CollisionWorld([-3000, -3000, 0.01, 3000, -3000, 0.01, 3000, 3000, 0.01, -3000, -3000, 0.01, 3000, 3000, 0.01, -3000, 3000, 0.01], [0, 0]);
+const curves = new Map<string, number[]>();
+/** Speed every half second from a standing start, flat out on a flat road, for 40 s (mph). */
+function accelerationCurve(s: CarSpec): number[] {
+  let out = curves.get(s.id);
+  if (!out) {
+    out = [];
+    const c = createCar(s, [0, 0, 0.61], 'N');
+    for (let t = 0; t <= 60 * 40; t++) {
+      if (t % 30 === 0) out.push(speedOf(c) * MPH);
+      stepCar(c, s, INPUT.Throttle, FLAT);
+    }
+    curves.set(s.id, out);
+  }
+  return out;
+}
+const descriptions = new Map<string, string[] | null>();
+function showroomCar(i: number): ShowroomCar {
+  const s = CARS[i]!;
+  const model = originalModels[s.id];
+  if (!descriptions.has(s.id)) {
+    descriptions.set(s.id, null);
+    void loadCarDescription(s.id).then((d) => descriptions.set(s.id, d));
+  }
+  const curve = accelerationCurve(s);
+  const name = model?.name ?? s.name;
+  return {
+    name,
+    description: descriptions.get(s.id) ?? [name, '', `Top Speed ${Math.round(Math.max(...curve))} MPH`],
+    paints: model?.paints ?? 1,
+    curveMph: curve,
+  };
+}
+const showroom = new Showroom({
+  count: CARS.length,
+  info: showroomCar,
+  buildCar: (i, paint) => {
+    const s = CARS[i]!;
+    const model = originalModels[s.id];
+    return model ? createCarMeshFromModel(model, s, paint) : createCarMesh(s, PAINT[i % PAINT.length]);
+  },
+});
+void loadPictures('SDCSEL.PVS').then((p) => showroom.setPictures(p?.get('stop') ?? null, p?.get('grap') ?? null));
+
+function showroomDone(): void {
+  manualGearbox = showroom.manual;
+  carPaint = showroom.paint;
+  showroom.close();
+  selectCar(showroom.index);
+}
+
 function menuAction(a: MenuAction): void {
-  if (a.type === 'drive') {
+  if (a.type === 'showroom') showroom.open(carIndex, carPaint, manualGearbox);
+  else if (a.type === 'drive') {
     menu.close();
     resetCar();
   } else if (a.type === 'car') selectCar(a.index);
@@ -267,6 +325,11 @@ dash.canvas.addEventListener('click', (e) => {
   const r = dash.canvas.getBoundingClientRect();
   const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
   const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+  if (showroom.visible) {
+    sound.start();
+    if (showroom.click(x, y).type === 'done') showroomDone();
+    return;
+  }
   if (menu.visible) {
     sound.start();
     menuAction(menu.click(x, y));
@@ -282,7 +345,7 @@ dash.canvas.addEventListener('click', (e) => {
 });
 
 function resetCar(): void {
-  car = createCar(spec, startPose.pos, startPose.heading);
+  car = createCar(spec, startPose.pos, startPose.heading, 0, manualGearbox);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
   camInit = false;
@@ -360,7 +423,7 @@ function spawnFromParam(): void {
   const p = new URLSearchParams(location.search).get('car');
   if (!p) return;
   const [e, n, u, hd, v] = p.split(',');
-  car = createCar(spec, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0));
+  car = createCar(spec, [Number(e), Number(n), Number(u)], hd as 'N' | 'E' | 'S' | 'W', Number(v ?? 0), manualGearbox);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
 }
@@ -388,6 +451,11 @@ window.addEventListener('keydown', (e) => {
   sound.start();
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
+    return;
+  }
+  if (showroom.visible) {
+    if (showroom.key(e.code).type === 'done') showroomDone();
+    e.preventDefault();
     return;
   }
   if (menu.visible) {
@@ -475,6 +543,14 @@ const toThree = (v: Vec3): THREE.Vector3 => new THREE.Vector3(v[0], v[2], -v[1])
 renderer.setAnimationLoop((now) => {
   const frameDt = Math.min((now - last) / 1000, 0.1);
   last = now;
+  if (showroom.visible) {
+    acc = 0;
+    sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
+    showroom.update(frameDt);
+    showroom.render(renderer);
+    dash.drawScreen((c) => showroom.drawPanel(c, now));
+    return;
+  }
   if (menu.visible) {
     // The race waits behind the menu.
     acc = 0;

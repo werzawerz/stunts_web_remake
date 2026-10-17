@@ -105,6 +105,10 @@ export interface CarState {
   steer: number;
   /** -1 = reverse, 1..n forward gears. */
   gear: number;
+  /** Manual gearbox: gears change only with GearUp/GearDown (the original's A and Z keys). */
+  manual: boolean;
+  /** Previous tick's input, to react to gear-key presses rather than holds. */
+  lastInput: number;
   rpm: number;
   /** Brake held since the car was moving forward: it brakes to a stop and stays there; a fresh
    *  press at a standstill is needed to reverse. */
@@ -125,7 +129,7 @@ export interface CarState {
 export type Heading = 'N' | 'E' | 'S' | 'W';
 const HEADING_FWD: Record<Heading, Vec3> = { N: [0, 1, 0], E: [1, 0, 0], S: [0, -1, 0], W: [-1, 0, 0] };
 
-export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0): CarState {
+export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0, manual = false): CarState {
   const f = HEADING_FWD[heading];
   const u: Vec3 = [0, 0, 1];
   return {
@@ -135,6 +139,8 @@ export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0
     angVel: [0, 0, 0],
     steer: 0,
     gear: 1,
+    manual,
+    lastInput: 0,
     rpm: 0,
     brakeLatched: false,
     grounded: false,
@@ -277,6 +283,13 @@ export function stepCar(s: CarState, spec: CarSpec, input: number, world: Collis
   const throttle = live && (input & INPUT.Throttle) !== 0;
   const brake = live && (input & INPUT.Brake) !== 0;
   const steerTarget = live ? (input & INPUT.Right ? 1 : 0) - (input & INPUT.Left ? 1 : 0) : 0;
+  // Manual gearbox: one gear per key press (reverse still comes from braking at a standstill).
+  const pressed = input & ~s.lastInput;
+  s.lastInput = input;
+  if (live && s.manual && s.gear > 0) {
+    if (pressed & INPUT.GearUp && s.gear < spec.gearRatios.length) s.gear++;
+    if (pressed & INPUT.GearDown && s.gear > 1) s.gear--;
+  }
   // Braking from forward motion latches until the key is released (see CarState.brakeLatched).
   if (!brake) s.brakeLatched = false;
   else if (s.gear > 0 && dot(s.vel, quatRotate(s.quat, [0, 1, 0])) > 0.5) s.brakeLatched = true;
@@ -339,7 +352,7 @@ function groundStep(
   else if (s.gear < 0 && throttle && vf > -0.5) s.gear = 1;
   const ratio = s.gear > 0 ? spec.gearRatios[s.gear - 1]! : spec.gearRatios[0]!;
   s.rpm = Math.max(spec.idleRpm, Math.abs(vf) * ratio);
-  if (s.gear > 0) {
+  if (s.gear > 0 && !s.manual) {
     if (s.rpm > spec.upshiftRpm && s.gear < spec.gearRatios.length) s.gear++;
     else if (s.rpm < spec.downshiftRpm && s.gear > 1) s.gear--;
   }

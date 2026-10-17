@@ -170,6 +170,23 @@ describe('Stunts-style car model', () => {
   });
 });
 
+describe('gearbox', () => {
+  it('automatic shifts up by itself; manual stays in gear until A (GearUp) is pressed', () => {
+    const drive = (manual: boolean, input: (t: number) => number): CarState => {
+      const s = createCar(DEFAULT_CAR, [0, 0, 0.61], 'N', 0, manual);
+      for (let t = 0; t < 60 * 8; t++) stepCar(s, DEFAULT_CAR, input(t), paved);
+      return s;
+    };
+    expect(drive(false, () => INPUT.Throttle).gear).toBeGreaterThan(1);
+    const held = drive(true, () => INPUT.Throttle);
+    expect(held.gear).toBe(1);
+    // Two presses (not holds) of GearUp: third gear.
+    const shifted = drive(true, (t) => INPUT.Throttle | (t === 60 || t === 120 ? INPUT.GearUp : 0));
+    expect(shifted.gear).toBe(3);
+    expect(speedOf(shifted)).toBeGreaterThan(speedOf(held));
+  });
+});
+
 describe('walls and obstacles', () => {
   // A paved slab with a 3 m high wall across the road 40 m ahead (north).
   const S2 = 500;

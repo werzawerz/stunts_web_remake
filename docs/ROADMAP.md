@@ -37,12 +37,13 @@ with our own assets, deployed as a playable web page with online lap times.
 
 - [x] Sound effects modelled on recordings of the original (engine, tyre squeal, crash, bump)
 - [x] Crash sequence and evaluation screen like the original; main menu (the original's picture
-      from the local files, five signs; Car/Track as simple lists, Option box, Escape opens it)
+      from the local files, five signs; Track as a simple list, Option box, Escape opens it)
+- [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
+      the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
 
 ## Next (in order)
 2a. **Import any `.TRK` from disk** (file picker; leaderboard keyed by track content).
-5. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
-   jobs each original model has); digital speed readouts in the cockpits that have them.
+5. Digital speed readouts in the cockpits that have them.
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
 ## Later
@@ -50,7 +51,6 @@ with our own assets, deployed as a playable web page with online lap times.
 8. **Replays and ghosts** — the deterministic simulation already allows input-log replays.
 9. **Sound** — engine pitch from rpm, skids, crash.
 10. **AI opponents** following the track path.
-11. **Manual gearbox** (the original offers auto or manual).
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
 
 ## Open decisions

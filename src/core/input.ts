@@ -17,10 +17,13 @@ export class KeyboardInput {
   mask(): number {
     const k = this.down;
     let m = 0;
-    if (k.has('ArrowUp') || k.has('KeyW')) m |= INPUT.Throttle;
-    if (k.has('ArrowDown') || k.has('KeyS')) m |= INPUT.Brake;
-    if (k.has('ArrowLeft') || k.has('KeyA')) m |= INPUT.Left;
-    if (k.has('ArrowRight') || k.has('KeyD')) m |= INPUT.Right;
+    // The original's keys: arrows drive, A shifts up and Z down with the manual gearbox.
+    if (k.has('ArrowUp')) m |= INPUT.Throttle;
+    if (k.has('ArrowDown')) m |= INPUT.Brake;
+    if (k.has('ArrowLeft')) m |= INPUT.Left;
+    if (k.has('ArrowRight')) m |= INPUT.Right;
+    if (k.has('KeyA')) m |= INPUT.GearUp;
+    if (k.has('KeyZ')) m |= INPUT.GearDown;
     if (k.has('KeyR')) m |= INPUT.Reset;
     return m;
   }
