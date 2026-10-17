@@ -27,6 +27,7 @@ import { Showroom, type ShowroomCar } from './ui/showroom';
 import { loadCarDescription } from './original/carInfo';
 import { TrackSelect, type BestTime } from './ui/trackSelect';
 import { TILE } from './track/constants';
+import { patternUniforms } from './track/patterns';
 import { MAX_REPLAY_TICKS, Replay, type Frame } from './race/replay';
 import { ReplayView, type ReplayAction, type ReplayMenuItem } from './ui/replayView';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
@@ -65,6 +66,8 @@ function layout(): void {
   renderer.domElement.style.imageRendering = pixelated;
   dash.canvas.style.imageRendering = pixelated;
   dash.setScale(resMode === 0 ? scale * dpr : 1);
+  // See-through patterns are drawn on the 320x200 picture's pixel grid.
+  patternUniforms.uPixel.value = Math.max(1, renderer.domElement.width / SCREEN_W);
 }
 layout();
 window.addEventListener('resize', layout);

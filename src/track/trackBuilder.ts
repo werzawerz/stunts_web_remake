@@ -3,6 +3,7 @@ import { HILL_HEIGHT, RAIL_HEIGHT, ROAD_HALF_WIDTH, SLAB, TILE, UNIT } from './c
 import { CollisionWorld, SURFACE } from '../physics/collision';
 import { MeshBuilder, type V3 } from './meshBuilder';
 import materials from '../../tools/stunts/materials.json';
+import { materialPattern } from './patterns';
 import { ELEMENT_SHAPES } from '../original/elementTable.generated';
 import type { Shape } from '../original/formats';
 import { decodeTerrain, decodeTile, footprint, type Building, type Dir, type Surface, type TileInfo } from './tiles';
@@ -777,7 +778,9 @@ function drawShape(
     if (prim.type >= 3 && prim.type <= 10) {
       // Markings carry the z-bias flag in the original; lift them a touch above the road.
       const pts = prim.idx.map((i) => tr(i, prim.flags & 2 ? 0.04 : 0));
+      mb.pattern = materialPattern(prim.materials[paint] ?? prim.materials[0]!);
       mb.poly(pts, color);
+      mb.pattern = 0;
       // Yellow centre-line dashes mark the middle of the original road.
       if (dashes && (prim.materials[0] === 21 || prim.materials[0] === 24)) {
         const k = 1 / pts.length;

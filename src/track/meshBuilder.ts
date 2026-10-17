@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { usePatterns } from './patterns';
 
 /** (east, north, up) in metres. Converted to Three.js (x, y, z) = (east, up, -north) on insertion. */
 export type V3 = readonly [number, number, number];
@@ -26,6 +27,10 @@ function faceShade(a: V3, b: V3, c: V3): number {
 export class MeshBuilder {
   private pos: number[] = [];
   private col: number[] = [];
+  /** See-through pattern per vertex (see patterns.ts); 0 = opaque. */
+  private pat: number[] = [];
+  /** Pattern of the triangles drawn from now on. */
+  pattern = 0;
   private readonly c = new THREE.Color();
   /** Driveable triangles in sim space (9 numbers each) and their surface ids, for CollisionWorld. */
   readonly solidPositions: number[] = [];
@@ -71,6 +76,7 @@ export class MeshBuilder {
     for (const p of [a, b, c]) {
       this.pos.push(p[0], p[2], -p[1]);
       this.col.push(this.c.r, this.c.g, this.c.b);
+      this.pat.push(this.pattern);
     }
     if (solid !== undefined) {
       this.solidPositions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
@@ -114,12 +120,14 @@ export class MeshBuilder {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('pattern', new THREE.Float32BufferAttribute(this.pat, 1));
     return g;
   }
 
   /** Unlit material: all shading is baked into the vertex colours. */
   build(): THREE.Mesh {
     const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    if (this.pat.some((p) => p !== 0)) usePatterns(mat);
     return new THREE.Mesh(this.buildGeometry(), mat);
   }
 }
