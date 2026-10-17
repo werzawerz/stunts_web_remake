@@ -41,7 +41,7 @@ export interface Cockpit {
 let palettePromise: Promise<[number, number, number][] | null> | null = null;
 
 /** The game's 256 colours (SDMAIN.PVS "!pal": 16-byte header, then 6-bit RGB triples). */
-function palette(): Promise<[number, number, number][] | null> {
+export function palette(): Promise<[number, number, number][] | null> {
   palettePromise ??= fetchOriginal('SDMAIN.PVS').then((buf) => {
     const pal = buf ? parseResources(unpack(buf)).get('!pal') : undefined;
     if (!pal) return null;
@@ -55,7 +55,7 @@ function palette(): Promise<[number, number, number][] | null> {
 }
 
 /** Bitmap resource → canvas sprite. Palette index 255 is transparent. */
-function sprite(bytes: Uint8Array | undefined, pal: [number, number, number][]): Sprite | undefined {
+export function sprite(bytes: Uint8Array | undefined, pal: [number, number, number][]): Sprite | undefined {
   if (!bytes || bytes.length < 16) return undefined;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const w = dv.getUint16(0, true);

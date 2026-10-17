@@ -21,6 +21,8 @@ import { formatRaceTime, ResultsPanel, typingInForm } from './ui/results';
 import { crackLines } from './ui/crash';
 import { buttonRects, type EvalRow, type EvaluationData } from './ui/evaluation';
 import { bodyColour, Debris } from './render/debris';
+import { MainMenu, type MenuAction } from './ui/menu';
+import { loadPictures } from './original/screens';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
@@ -185,7 +187,7 @@ let evalSelected = 1;
 const EVAL_BUTTONS = [
   { label: ['View', 'Replay'], enabled: false }, // no replays yet
   { label: ['Drive'], enabled: true },
-  { label: ['Main', 'Menu'], enabled: false }, // no main menu yet
+  { label: ['Main', 'Menu'], enabled: true },
 ];
 const PLEASE_WAIT_AT = 3.0;
 const EVALUATION_AT = 3.8;
@@ -231,14 +233,46 @@ function evaluationData(): EvaluationData | null {
 
 function evalActivate(i: number): void {
   if (i === 1) resetCar(); // Drive
+  if (i === 2) {
+    resetCar();
+    menu.open();
+  }
+}
+
+// ---- main menu (the original's road with five signs) ------------------------------------------
+const menu = new MainMenu({
+  cars: () => CARS.map((c) => originalModels[c.id]?.name ?? c.name),
+  carIndex: () => carIndex,
+  tracks: () => TRACKS.map((t) => t.name),
+  trackIndex: () => trackIndex,
+  soundOn: () => !sound.muted,
+});
+void loadPictures('SDMSEL.PVS').then((p) => (menu.picture = p?.get('scrn') ?? null));
+
+function menuAction(a: MenuAction): void {
+  if (a.type === 'drive') {
+    menu.close();
+    resetCar();
+  } else if (a.type === 'car') selectCar(a.index);
+  else if (a.type === 'track') void selectTrack(a.index, 1, true);
+  else if (a.type === 'sound') sound.setMuted(!a.on);
+  else if (a.type === 'pixels') {
+    resMode = RES_MODES[(RES_MODES.indexOf(resMode as 2 | 1 | 0) + 1) % RES_MODES.length]!;
+    layout();
+  }
 }
 
 // Mouse: click a button on the evaluation screen.
 dash.canvas.addEventListener('click', (e) => {
-  if (!evaluationShown()) return;
   const r = dash.canvas.getBoundingClientRect();
   const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
   const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+  if (menu.visible) {
+    sound.start();
+    menuAction(menu.click(x, y));
+    return;
+  }
+  if (!evaluationShown()) return;
   buttonRects(EVAL_BUTTONS.length).forEach(([bx, by, bw, bh], i) => {
     if (EVAL_BUTTONS[i]!.enabled && x >= bx && x < bx + bw && y >= by && y < by + bh) {
       evalSelected = i;
@@ -356,6 +390,15 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
     return;
   }
+  if (menu.visible) {
+    menuAction(menu.key(e.code));
+    e.preventDefault();
+    return;
+  }
+  if (e.code === 'Escape') {
+    menu.open();
+    return;
+  }
   if (evaluationShown() && ['ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'NumpadEnter'].includes(e.code)) {
     if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
       const step = e.code === 'ArrowLeft' ? -1 : 1;
@@ -411,6 +454,8 @@ const trackParam = params.get('track') ?? 'orig-default';
   const i = TRACKS.findIndex((t) => t.id === trackParam);
   if (i > 0) void selectTrack(i, 1, true);
 }
+// The game opens on the main menu, like the original (debug views and ?menu=0 go straight in).
+if (!['cam', 'car', 'view'].some((k) => params.has(k)) && params.get('menu') !== '0') menu.open();
 const viewParam = params.get('view');
 if (viewParam === 'chase' || viewParam === 'cockpit' || viewParam === 'free') view = viewParam;
 const camParam = params.get('cam');
@@ -430,6 +475,13 @@ const toThree = (v: Vec3): THREE.Vector3 => new THREE.Vector3(v[0], v[2], -v[1])
 renderer.setAnimationLoop((now) => {
   const frameDt = Math.min((now - last) / 1000, 0.1);
   last = now;
+  if (menu.visible) {
+    // The race waits behind the menu.
+    acc = 0;
+    sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
+    dash.drawScreen((c) => menu.draw(c));
+    return;
+  }
   acc += frameDt;
   while (acc >= DT) {
     const raw = input.mask();
@@ -554,7 +606,7 @@ renderer.setAnimationLoop((now) => {
         : now < flashUntil
           ? flashText
           : car.ticks < 240
-            ? 'ARROWS DRIVE  R RESTART  T TRACK  V CAR  C CAMERA  P PIXELS  M SOUND'
+            ? 'ARROWS DRIVE  R RESTART  ESC MENU  C CAMERA  M SOUND'
             : '',
   });
 });

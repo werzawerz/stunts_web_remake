@@ -35,6 +35,10 @@ with our own assets, deployed as a playable web page with online lap times.
       loops need speed. A test driver (`src/race/autopilot.ts`, `LAPS=1 npx vitest run
       src/track/originalLaps.test.ts`) laps all six original tracks without crash or penalty
 
+- [x] Sound effects modelled on recordings of the original (engine, tyre squeal, crash, bump)
+- [x] Crash sequence and evaluation screen like the original; main menu (the original's picture
+      from the local files, five signs; Car/Track as simple lists, Option box, Escape opens it)
+
 ## Next (in order)
 2a. **Import any `.TRK` from disk** (file picker; leaderboard keyed by track content).
 5. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint

@@ -66,6 +66,15 @@ export class Dashboard {
     this.canvas.height = SCREEN_H * this.scale;
   }
 
+  /** Draw a full screen of our own (menus) in 320x200 coordinates. */
+  drawScreen(paint: (c: CanvasRenderingContext2D) => void): void {
+    const c = this.ctx;
+    c.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    c.clearRect(0, 0, SCREEN_W, SCREEN_H);
+    c.imageSmoothingEnabled = false;
+    paint(c);
+  }
+
   draw(s: HudState): void {
     const c = this.ctx;
     c.setTransform(this.scale, 0, 0, this.scale, 0, 0);

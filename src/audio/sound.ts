@@ -23,6 +23,8 @@ export interface SoundState {
   /** Tyres sliding (or scraping). */
   skidding: boolean;
   crashed: boolean;
+  /** Menus: no engine. */
+  silent?: boolean;
 }
 
 export class CarSound {
@@ -109,8 +111,8 @@ export class CarSound {
       p.setTargetAtTime(v, t, tc);
     };
     glide(this.engine.frequency, engineHz(s.rpm), 0.03);
-    glide(this.engineGain.gain, s.crashed ? 0 : 0.5, 0.02);
-    const squeal = (s.skidding && !s.crashed) || t < this.crashUntil;
+    glide(this.engineGain.gain, s.crashed || s.silent ? 0 : 0.5, 0.02);
+    const squeal = (s.skidding && !s.crashed && !s.silent) || t < this.crashUntil;
     glide(this.skidGain.gain, squeal ? 1 : 0, 0.02);
   }
 
