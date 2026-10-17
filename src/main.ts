@@ -31,7 +31,9 @@ import { MAX_REPLAY_TICKS, Replay, type Frame } from './race/replay';
 import { ReplayView, type ReplayAction, type ReplayMenuItem } from './ui/replayView';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
-import { getLeaderboard, submitLapTime } from './net/supabase';
+import { getGhost, getLeaderboard, submitLapTime } from './net/supabase';
+import { Ghost, startOnLine } from './race/ghost';
+import { listReplays, saveReplay, type SavedReplay } from './race/replayStore';
 import { CarSound } from './audio/sound';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
@@ -125,6 +127,8 @@ void loadOriginalCarModels().then((models) => {
     console.info(`[stunts] using ${Object.keys(models).length} original car models`);
     replaceCarObject();
     flash(`${carName().toUpperCase()}  (V: NEXT CAR)`);
+    // Laps are stored under the cars' original names: find the ghost's car again.
+    loadGhost();
   }
 });
 
@@ -282,6 +286,7 @@ function nameKey(e: KeyboardEvent): void {
       .then(() => {
         f.prompt = null;
         fetchRows((rows) => (f.rows = rows));
+        loadGhost(); // the new time may be the track's best
       })
       .catch((err: unknown) => {
         p.busy = false;
@@ -306,6 +311,8 @@ const menu = new MainMenu({
   tracks: () => TRACKS.map((t) => t.name),
   trackIndex: () => trackIndex,
   soundOn: () => !sound.muted,
+  ghostOn: () => ghostEnabled,
+  replayNames: () => listReplays().map((r) => r.name),
 });
 void loadPictures('SDMSEL.PVS').then((p) => (menu.picture = p?.get('scrn') ?? null));
 
@@ -423,6 +430,11 @@ function menuAction(a: MenuAction): void {
   } else if (a.type === 'car') selectCar(a.index);
   else if (a.type === 'track') void selectTrack(a.index, 1, true);
   else if (a.type === 'sound') sound.setMuted(!a.on);
+  else if (a.type === 'ghost') setGhostEnabled(a.on);
+  else if (a.type === 'loadreplay') {
+    const r = listReplays()[a.index];
+    if (r) void loadSavedReplay(r);
+  }
   else if (a.type === 'pixels') {
     resMode = RES_MODES[(RES_MODES.indexOf(resMode as 2 | 1 | 0) + 1) % RES_MODES.length]!;
     layout();
@@ -471,12 +483,16 @@ interface RunState {
 let replayLog: number[] = [];
 let replay: Replay<RunState> | null = null;
 let rframe: Frame<RunState> | null = null;
-let replayFrom: 'evaluation' | 'race' = 'race';
+let replayFrom: 'evaluation' | 'race' | 'loaded' = 'race';
+/** What the replay is of (for Save REPLAY). */
+let replayMeta = { trackId: '', carId: '', paint: 0, manual: false };
 let replayAcc = 0;
 const replayView = new ReplayView();
 void loadPictures('SDGAME.PVS').then((p) => (replayView.pictures = p));
+replayView.savedNames = () => listReplays().map((r) => r.name);
 
-function startReplay(from: 'evaluation' | 'race'): void {
+function startReplay(from: 'evaluation' | 'race' | 'loaded'): void {
+  replayMeta = { trackId, carId: spec.id, paint: carPaint, manual: manualGearbox };
   const s0 = spec;
   const pose = startPose;
   const man = manualGearbox;
@@ -484,17 +500,35 @@ function startReplay(from: 'evaluation' | 'race'): void {
   const r = route;
   replay = new Replay<RunState>(
     replayLog.slice(),
-    () => ({ car: createCar(s0, pose.pos, pose.heading, 0, man), lap: createLap() }),
+    () => ({ car: startOnLine(s0, pose.pos, pose.heading, man, w), lap: createLap() }),
     (st, input) => {
       stepCar(st.car, s0, input, w);
       if (r) stepLap(st.lap, r, st.car.pos, st.car.vel, (input & INPUT.Throttle) !== 0 || speedOf(st.car) > 0.5, st.car.crashed);
     },
   );
   replayFrom = from;
-  // From the evaluation the replay plays from the start; mid-race it stops where you are.
-  rframe = replay.frameAt(from === 'evaluation' ? 0 : replay.length);
+  // From the evaluation (or loaded) the replay plays from the start; mid-race it stops where you are.
+  rframe = replay.frameAt(from === 'race' ? replay.length : 0);
   replayAcc = 0;
-  replayView.open(from === 'evaluation' ? 'play' : 'stop');
+  replayView.open(from === 'race' ? 'stop' : 'play');
+}
+
+/** Load a saved replay: its track and car first, then play it. */
+async function loadSavedReplay(r: SavedReplay): Promise<void> {
+  const ti = TRACKS.findIndex((t) => t.id === r.trackId);
+  const ci = CARS.findIndex((c) => c.id === r.carId);
+  if (ti < 0 || ci < 0) {
+    flash("THIS REPLAY'S TRACK OR CAR ISN'T AVAILABLE");
+    return;
+  }
+  leaveReplay();
+  menu.close();
+  carPaint = r.paint;
+  manualGearbox = r.manual;
+  selectCar(ci);
+  if (ti !== trackIndex) await selectTrack(ti, 1, true);
+  replayLog = r.inputs.slice(0, MAX_REPLAY_TICKS);
+  startReplay('loaded');
 }
 
 function replayItems(): ReplayMenuItem[] {
@@ -514,6 +548,13 @@ function leaveReplay(): void {
 function replayAction(a: ReplayAction): void {
   if (!replay || !rframe) return;
   if (a.type === 'start') rframe = replay.frameAt(0);
+  else if (a.type === 'save') {
+    const ok = saveReplay({ name: a.name, ...replayMeta, inputs: [...replay.inputs] });
+    flash(ok ? `REPLAY "${a.name.toUpperCase()}" SAVED` : 'COULD NOT SAVE: BROWSER STORAGE FULL?');
+  } else if (a.type === 'load') {
+    const r = listReplays()[a.index];
+    if (r) void loadSavedReplay(r);
+  }
   else if (a.type === 'item') {
     if (a.item === 'evaluation') leaveReplay();
     else if (a.item === 'restart') {
@@ -536,6 +577,10 @@ function replayAction(a: ReplayAction): void {
       prevQuat = [...car.quat];
       replayLog = replayLog.slice(0, tick);
       inputLog = inputLog.slice(0, lap.ticks);
+      if (ghost) {
+        ghost.reset();
+        ghost.follow(inputLog.length);
+      }
     }
   }
 }
@@ -606,9 +651,74 @@ function replayCamera(rc: CarState): void {
   }
 }
 
+// ---- ghost: the track's fastest stored lap, driven again alongside you --------------------------
+let ghostEnabled = (() => {
+  try {
+    return localStorage.getItem('stunts.ghost') !== '0';
+  } catch {
+    return true;
+  }
+})();
+let ghost: Ghost | null = null;
+let ghostObj: THREE.Group | null = null;
+
+function setGhostEnabled(on: boolean): void {
+  ghostEnabled = on;
+  try {
+    localStorage.setItem('stunts.ghost', on ? '1' : '0');
+  } catch {
+    // Not remembered; fine.
+  }
+}
+
+function dropGhost(): void {
+  if (ghostObj) {
+    scene.remove(ghostObj);
+    ghostObj.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+    });
+  }
+  ghost = null;
+  ghostObj = null;
+}
+
+/** Fetch the fastest stored lap of the current track and set it up as the ghost. */
+function loadGhost(): void {
+  const id = trackId;
+  const w = world;
+  const pose = startPose;
+  dropGhost();
+  getGhost(id)
+    .then((row) => {
+      if (!row || id !== trackId || w !== world) return;
+      const s = CARS.find((c) => c.name === row.car || originalModels[c.id]?.name === row.car);
+      if (!s) return;
+      dropGhost();
+      ghost = new Ghost(s, row.inputs, pose.pos, pose.heading, w);
+      ghost.follow(inputLog.length);
+      const model = originalModels[s.id];
+      ghostObj = model ? createCarMeshFromModel(model, s, 0) : createCarMesh(s, 0xe8e8e8);
+      ghostObj.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          const m = o.material as THREE.Material;
+          m.transparent = true;
+          m.opacity = 0.4;
+          m.depthWrite = false;
+        }
+      });
+      ghostObj.visible = false;
+      scene.add(ghostObj);
+    })
+    .catch(() => undefined);
+}
+
 function resetCar(): void {
   replayLog = [];
-  car = createCar(spec, startPose.pos, startPose.heading, 0, manualGearbox);
+  ghost?.reset();
+  car = startOnLine(spec, startPose.pos, startPose.heading, manualGearbox, world);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
   camInit = false;
@@ -682,6 +792,7 @@ function loadScene(track: Track): void {
   renderer.setClearColor(horizonView.fogColor);
   resetCar();
   spawnFromParam();
+  loadGhost();
 }
 
 /** Debug: ?car=e,n,u,H,speed places the car (again after every track load). */
@@ -724,6 +835,11 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
     return;
   }
+  if (replayView.visible && replayView.typing) {
+    replayAction(replayView.typeKey(e));
+    e.preventDefault();
+    return;
+  }
   if (replayView.visible) {
     replayAction(replayView.key(e.code, replayItems));
     e.preventDefault();
@@ -763,7 +879,10 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (e.code === 'KeyM') {
+  if (e.code === 'KeyG') {
+    setGhostEnabled(!ghostEnabled);
+    flash(ghostEnabled ? (ghost ? 'GHOST ON  (G)' : 'GHOST ON: NO STORED LAP HERE YET') : 'GHOST OFF  (G)');
+  } else if (e.code === 'KeyM') {
     sound.setMuted(!sound.muted);
     flash(sound.muted ? 'SOUND OFF  (M)' : 'SOUND ON  (M)');
   } else if (e.code === 'KeyC') {
@@ -841,6 +960,7 @@ renderer.setAnimationLoop((now) => {
       if (rframe.tick === 0) replayView.mode = 'stop';
     }
     const rc = rframe.state.car;
+    if (ghostObj) ghostObj.visible = false;
     setObjectPose(carObject, rc.pos, rc.quat);
     carObject.visible = replayView.camera !== 'inside' && !rc.crashed;
     if (crash) crash.debris.group.visible = false;
@@ -875,7 +995,19 @@ renderer.setAnimationLoop((now) => {
       crashFx: rc.crashed
         ? { cracks: inside ? crackLines(rpl.length, SCREEN_W, SCREEN_H) : null, fire, frame: Math.floor(now / 50), pleaseWait: false }
         : undefined,
-      after: (c) => replayView.draw(c, rf.tick, rpl.length, now),
+      after: (c) => {
+        replayView.draw(c, rf.tick, rpl.length, now);
+        // Messages (e.g. "replay saved") at the top, clear of the panel.
+        if (now < flashUntil) {
+          c.font = 'bold 7px monospace';
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.fillStyle = '#000000';
+          c.fillText(flashText, 161, 41);
+          c.fillStyle = '#fcfcfc';
+          c.fillText(flashText, 160, 40);
+        }
+      },
     });
     return;
   }
@@ -937,6 +1069,7 @@ renderer.setAnimationLoop((now) => {
       const moving = (mask & INPUT.Throttle) !== 0 || speedOf(car) > 0.5;
       stepLap(lap, route, car.pos, car.vel, moving, car.crashed);
       if (lap.phase === 'running') inputLog.push(mask);
+      ghost?.follow(inputLog.length);
       if (wasRunning && lap.phase === 'finished') onFinish();
     }
     acc -= DT;
@@ -960,6 +1093,10 @@ renderer.setAnimationLoop((now) => {
   len = Math.sqrt(len);
   for (let i = 0; i < 4; i++) qi[i] = qi[i]! / len;
   setObjectPose(carObject, pos, qi);
+  if (ghost && ghostObj) {
+    setObjectPose(ghostObj, ghost.car.pos, ghost.car.quat);
+    ghostObj.visible = ghostEnabled && !evaluationShown();
+  }
   // An exploded car is gone: only its debris and the fireball remain.
   carObject.visible = view !== 'cockpit' && !crash;
   if (crash) {

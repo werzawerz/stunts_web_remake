@@ -44,6 +44,8 @@ with our own assets, deployed as a playable web page with online lap times.
 - [x] Replays like the original: the run's inputs re-simulated; replay panel (original pictures),
       play / fast play / rewind / fast forward, cameras Inside, Overhead, Track cams, Manual; replay
       menu with Continue Driving from any point; Escape mid-race opens it; View Replay works
+- [x] Save/Load REPLAY (kept in the browser), ghost car of the track's fastest stored lap
+      (Option menu / G); the lap clock no longer starts while the car settles on the line
 - [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
 
@@ -52,7 +54,6 @@ with our own assets, deployed as a playable web page with online lap times.
 
 ## Later
 7. **Track editor** — 30×30 grid editor like the original; save/share tracks via Supabase.
-8. **Ghosts** (replays of the best laps racing alongside) and saving/loading replays.
 9. **Sound** — engine pitch from rpm, skids, crash.
 10. **AI opponents** following the track path.
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.

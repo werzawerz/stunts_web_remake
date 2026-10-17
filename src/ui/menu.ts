@@ -15,6 +15,8 @@ export type MenuAction =
   | { type: 'car'; index: number }
   | { type: 'track'; index: number }
   | { type: 'sound'; on: boolean }
+  | { type: 'ghost'; on: boolean }
+  | { type: 'loadreplay'; index: number }
   | { type: 'pixels' }
   | { type: 'none' };
 
@@ -44,6 +46,9 @@ export interface MenuOptions {
   tracks: () => string[];
   trackIndex: () => number;
   soundOn: () => boolean;
+  ghostOn: () => boolean;
+  /** Names of the replays saved in this browser. */
+  replayNames: () => string[];
 }
 
 export class MainMenu {
@@ -84,7 +89,7 @@ export class MainMenu {
     else if (code === 'Escape') this.screen = { kind: 'main' };
     else if (enter) {
       const a = s.pick(s.selected);
-      if (this.screen === s && a.type !== 'sound' && a.type !== 'pixels') this.screen = { kind: 'main' };
+      if (this.screen === s && !['sound', 'ghost', 'pixels'].includes(a.type)) this.screen = { kind: 'main' };
       return a;
     }
     return { type: 'none' };
@@ -113,20 +118,42 @@ export class MainMenu {
   }
 
   private optionsScreen(selected: number): void {
-    const items = [`Sound effects ${this.opts.soundOn() ? 'on' : 'off'}`, 'Graphic level', 'Done'];
+    const items = [
+      `Sound effects ${this.opts.soundOn() ? 'on' : 'off'}`,
+      `Ghost car ${this.opts.ghostOn() ? 'on' : 'off'}`,
+      'Load replay',
+      'Graphic level',
+      'Done',
+    ];
     this.screen = {
       kind: 'list',
       title: 'Options',
       items,
       selected,
       pick: (k) => {
+        // Toggles stay on the options box, showing the new setting.
         if (k === 0) {
           const on = !this.opts.soundOn();
           queueMicrotask(() => this.optionsScreen(0));
           return { type: 'sound', on };
         }
         if (k === 1) {
+          const on = !this.opts.ghostOn();
           queueMicrotask(() => this.optionsScreen(1));
+          return { type: 'ghost', on };
+        }
+        if (k === 2) {
+          const names = this.opts.replayNames();
+          queueMicrotask(() => {
+            this.screen =
+              names.length === 0
+                ? { kind: 'message', title: 'Load replay', lines: ['No saved replays yet.', 'Save one from the replay menu.'] }
+                : { kind: 'list', title: 'Load replay', items: names, selected: 0, pick: (i) => ({ type: 'loadreplay', index: i }) };
+          });
+          return { type: 'none' };
+        }
+        if (k === 3) {
+          queueMicrotask(() => this.optionsScreen(3));
           return { type: 'pixels' };
         }
         this.screen = { kind: 'main' };

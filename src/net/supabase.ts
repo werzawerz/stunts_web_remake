@@ -49,3 +49,23 @@ export async function submitLapTime(lap: {
   });
   if (error) throw error;
 }
+
+/** The fastest lap on a track that has its inputs stored (for the ghost car), or null. */
+export async function getGhost(trackId: string): Promise<(LapTime & { inputs: number[] }) | null> {
+  const db = getClient();
+  if (!db) return null;
+  const { data, error } = await db
+    .from('lap_times')
+    .select('player_name, car, time_ms, created_at, input_log_base64')
+    .eq('track_id', trackId)
+    .not('input_log_base64', 'is', null)
+    .order('time_ms', { ascending: true })
+    .limit(1);
+  if (error) throw error;
+  const row = data?.[0] as (LapTime & { input_log_base64: string }) | undefined;
+  if (!row) return null;
+  const s = atob(row.input_log_base64);
+  const inputs: number[] = [];
+  for (let i = 0; i < s.length; i++) inputs.push(s.charCodeAt(i));
+  return { player_name: row.player_name, car: row.car, time_ms: row.time_ms, created_at: row.created_at, inputs };
+}

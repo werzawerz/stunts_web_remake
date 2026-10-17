@@ -12,8 +12,13 @@ export type ReplayMode = 'stop' | 'play' | 'fast' | 'rewind' | 'forward';
 export type ReplayCamera = 'inside' | 'overhead' | 'track' | 'manual';
 export const CAMERAS: ReplayCamera[] = ['inside', 'overhead', 'track', 'manual'];
 
-export type ReplayMenuItem = 'return' | 'evaluation' | 'restart' | 'continue' | 'main';
-export type ReplayAction = { type: 'start' } | { type: 'item'; item: ReplayMenuItem } | { type: 'none' };
+export type ReplayMenuItem = 'return' | 'evaluation' | 'restart' | 'continue' | 'load' | 'save' | 'main';
+export type ReplayAction =
+  | { type: 'start' }
+  | { type: 'item'; item: ReplayMenuItem }
+  | { type: 'save'; name: string }
+  | { type: 'load'; index: number }
+  | { type: 'none' };
 
 interface Button {
   /** Mode it sets, or 'menu' / 'start'. */
@@ -39,8 +44,8 @@ const MENU: { item: ReplayMenuItem | null; label: string }[] = [
   { item: 'evaluation', label: 'Return to Evaluation' },
   { item: 'restart', label: 'Re-Start Driving' },
   { item: 'continue', label: 'Continue Driving' },
-  { item: null, label: 'Load REPLAY' },
-  { item: null, label: 'Save REPLAY' },
+  { item: 'load', label: 'Load REPLAY' },
+  { item: 'save', label: 'Save REPLAY' },
   { item: 'main', label: 'Main Menu' },
 ];
 
@@ -64,6 +69,21 @@ export class ReplayView {
   pictures: Map<string, Sprite> | null = null;
   private selected = 3;
   private menu: { selected: number; enabled: Set<ReplayMenuItem> } | null = null;
+  /** Save REPLAY: the name being typed; Load REPLAY: the list of saved replays. */
+  private prompt: { text: string; status: string } | null = null;
+  private list: { items: string[]; selected: number; top: number } | null = null;
+  /** Names of the saved replays (set by the game). */
+  savedNames: () => string[] = () => [];
+
+  /** A message under the save box (e.g. when the browser refuses to store). */
+  setStatus(status: string): void {
+    if (this.prompt) this.prompt.status = status;
+  }
+
+  /** Open the Load REPLAY list directly (from the main menu's options). */
+  openLoadList(): void {
+    this.list = { items: this.savedNames(), selected: 0, top: 0 };
+  }
 
   open(mode: ReplayMode): void {
     this.visible = true;
@@ -75,6 +95,8 @@ export class ReplayView {
   close(): void {
     this.visible = false;
     this.menu = null;
+    this.prompt = null;
+    this.list = null;
   }
 
   get menuOpen(): boolean {
@@ -83,11 +105,43 @@ export class ReplayView {
 
   openMenu(enabled: ReplayMenuItem[]): void {
     this.mode = 'stop';
-    this.menu = { selected: 0, enabled: new Set(['return', ...enabled]) };
+    this.menu = { selected: 0, enabled: new Set(['return', 'load', 'save', ...enabled]) };
+  }
+
+  /** Typing a replay's name: letters, Backspace, Enter saves, Escape cancels. */
+  typeKey(e: KeyboardEvent): ReplayAction {
+    const p = this.prompt;
+    if (!p) return { type: 'none' };
+    if (e.key === 'Escape') this.prompt = null;
+    else if (e.key === 'Backspace') p.text = p.text.slice(0, -1);
+    else if (e.key === 'Enter') {
+      const name = p.text.trim();
+      if (name) {
+        this.prompt = null;
+        return { type: 'save', name };
+      }
+    } else if (e.key.length === 1 && p.text.length < 16) p.text += e.key;
+    return { type: 'none' };
+  }
+
+  get typing(): boolean {
+    return this.prompt !== null;
   }
 
   key(code: string, enabled: () => ReplayMenuItem[]): ReplayAction {
     const enter = code === 'Enter' || code === 'NumpadEnter';
+    const l = this.list;
+    if (l) {
+      if (l.items.length === 0 || code === 'Escape') this.list = null;
+      else if (code === 'ArrowUp') l.selected = (l.selected + l.items.length - 1) % l.items.length;
+      else if (code === 'ArrowDown') l.selected = (l.selected + 1) % l.items.length;
+      else if (enter) {
+        this.list = null;
+        return { type: 'load', index: l.selected };
+      }
+      if (this.list) l.top = Math.min(Math.max(l.top, l.selected - 7), l.selected);
+      return { type: 'none' };
+    }
     const m = this.menu;
     if (m) {
       const move = (d: number): void => {
@@ -106,7 +160,9 @@ export class ReplayView {
       else if (enter) {
         const item = MENU[m.selected]!.item!;
         this.menu = null;
-        if (item !== 'return') return { type: 'item', item };
+        if (item === 'save') this.prompt = { text: '', status: '' };
+        else if (item === 'load') this.openLoadList();
+        else if (item !== 'return') return { type: 'item', item };
       }
       return { type: 'none' };
     }
@@ -171,6 +227,33 @@ export class ReplayView {
     if (Math.floor(now / 500) % 2 === 0) outlined(c, 'Replay', 308, 18, 'right', 9);
     if (!this.panelHidden) this.drawPanel(c, tick, total);
     if (this.menu) this.drawMenu(c);
+    if (this.prompt) {
+      box(c, 60, 70, 200, 40, 'Save Replay: name?');
+      c.fillStyle = '#fcfc54';
+      c.fillText(this.prompt.text + (Math.floor(now / 400) % 2 === 0 ? '_' : ' '), 69, 92);
+      c.fillStyle = '#a8a8a8';
+      c.font = '7px monospace';
+      c.fillText(this.prompt.status || 'Enter: save   Esc: cancel', 69, 102);
+    }
+    if (this.list) {
+      const l = this.list;
+      box(c, 64, 36, 192, 112, 'Load Replay');
+      if (l.items.length === 0) {
+        c.fillStyle = '#fcfcfc';
+        c.fillText('No saved replays yet', 72, 64);
+      }
+      for (let r = 0; r < 8 && l.top + r < l.items.length; r++) {
+        const i = l.top + r;
+        const t = l.items[i]!;
+        const ty = y0List + r * 10;
+        if (i === l.selected) {
+          c.fillStyle = '#fcfcfc';
+          c.fillRect(71, ty - 5, c.measureText(t).width + 3, 10);
+          c.fillStyle = '#000000';
+        } else c.fillStyle = '#fcfcfc';
+        c.fillText(t, 72, ty);
+      }
+    }
   }
 
   private drawPanel(c: CanvasRenderingContext2D, tick: number, total: number): void {
@@ -250,6 +333,22 @@ export class ReplayView {
       c.fillText(e.label, x + 8, ty);
     });
   }
+}
+
+const y0List = 64;
+
+/** The original's message box: black, red frame, a white title. Leaves the text style set. */
+function box(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, title: string): void {
+  c.fillStyle = '#000000';
+  c.fillRect(x, y, w, h);
+  c.strokeStyle = '#a80000';
+  c.lineWidth = 1;
+  c.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+  c.font = 'bold 8px monospace';
+  c.textAlign = 'left';
+  c.textBaseline = 'middle';
+  c.fillStyle = '#fcfcfc';
+  c.fillText(title, x + 8, y + 10);
 }
 
 function outlined(c: CanvasRenderingContext2D, t: string, x: number, y: number, align: CanvasTextAlign, size: number): void {
