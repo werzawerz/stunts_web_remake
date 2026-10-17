@@ -10,6 +10,8 @@ import { quatRotate } from '../physics/vec';
 const G = 9.81;
 /** Speed (m/s) to crest a hill top or ramp lip at when a bend follows: the car lands in time. */
 const CREST_SPEED = 14;
+/** Speed (m/s) to crest into a dip between ramps: lands on the way down, keeps speed for after. */
+const DIP_SPEED = 30;
 /** Bends this far (m) past a crest count as following it. */
 const CREST_REACH = 100;
 
@@ -23,6 +25,8 @@ export class Autopilot {
     private readonly cruise = 42,
     /** Per line point: guided (loops steer the car themselves; their bends need no slowing). */
     private readonly guided: boolean[] = [],
+    /** Per line point: a jump's take-off point (the route continues across a gap). */
+    private readonly lip: boolean[] = [],
   ) {}
 
   /** Index of the line point closest to the car, searching forward from the last one. */
@@ -40,6 +44,21 @@ export class Autopilot {
       }
     }
     this.idx = best;
+  }
+
+  /** Whether there is a jump take-off point within the next `dist` metres. */
+  private lipWithin(dist: number): boolean {
+    const n = this.line.length;
+    let i = this.idx;
+    let left = dist;
+    for (let k = 0; k < n && left >= 0; k++) {
+      if (this.lip[i]) return true;
+      const a = this.line[i]!;
+      const b = this.line[(i + 1) % n]!;
+      left -= Math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2);
+      i = (i + 1) % n;
+    }
+    return false;
   }
 
   /** Whether the line `dist` metres ahead is on a guided piece. */
@@ -104,9 +123,9 @@ export class Autopilot {
     const step = 8;
     let prev = this.ahead(0);
     let cur = this.ahead(step);
-    // Where the road tips over a crest (a hill top, the end of an elevated road) into a real descent
-    // (> 6 m): fast cars fly off there and can't steer until they land. Not ramp lips reached
-    // climbing: those are jumps (gaps between bridge ramps) and want speed.
+    // Where the road tips over a crest into a real descent (> 6 m: a hill top, the end of an
+    // elevated road) or high up (a ramp top onto an elevated road): fast cars fly off there and
+    // can't steer until they land. Not jump take-offs: those want speed.
     let crest = -1;
     for (let d = 2 * step; d <= 140; d += step) {
       const next = this.ahead(d);
@@ -124,16 +143,16 @@ export class Autopilot {
       if (crest < 0 && la > 0.5 && lb > 0.5 && (cur[2] - prev[2]) / la - (next[2] - cur[2]) / lb > 0.15) {
         // A jump: bends beyond it are for after landing. With nothing to slow for before it, take
         // off flat out (gaps between bridge ramps need more than the usual cruising speed).
-        if ((cur[2] - prev[2]) / la > 0.2 && cur[2] > 10) {
+        if (this.lipWithin(d)) {
           if (limit >= this.cruise) limit = Infinity;
           break;
         }
-        if (this.ahead(d + 2 * step)[2] < cur[2] - 6) crest = d - step;
+        if (this.ahead(d + 2 * step)[2] < cur[2] - 6 || cur[2] > 10) crest = d - step;
       }
       // A climb soon after a crest (a dip between ramps): flying over the dip slams the car into the
       // rising side, so crest it slowly enough to follow the road down.
       if (crest >= 0 && d - crest < CREST_REACH && lb > 0.5 && (next[2] - cur[2]) / lb > 0.2) {
-        const atCrest = Math.sqrt(CREST_SPEED * CREST_SPEED + 2 * this.spec.brakeDecel * 0.8 * Math.max(0, crest - step));
+        const atCrest = Math.sqrt(DIP_SPEED * DIP_SPEED + 2 * this.spec.brakeDecel * 0.8 * Math.max(0, crest - step));
         if (atCrest < limit) limit = atCrest;
       }
       if (la > 0.5 && lb > 0.5 && !this.guidedAhead(d - step)) {

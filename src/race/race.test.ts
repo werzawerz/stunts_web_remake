@@ -8,10 +8,10 @@ import type { Vec3 } from '../physics/vec';
 
 const route = buildRoute(buildTrack(buildSampleTrack()).pieces, 'E')!;
 
-/** Centre of an element's first tile, at road height 0. */
+/** Centre of an element's first tile, at the height of its road's start. */
 const at = (i: number): Vec3 => {
   const [x, z] = route.pieces[i]!.cells[0]!;
-  return [(x + 0.5) * TILE, (z + 0.5) * TILE, 0];
+  return [(x + 0.5) * TILE, (z + 0.5) * TILE, route.pieces[i]!.path[0]![2]];
 };
 const velAlong = (i: number): Vec3 => [route.dirs[i]![0] * 30, route.dirs[i]![1] * 30, 0];
 

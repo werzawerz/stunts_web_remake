@@ -50,7 +50,7 @@ export function stepLap(s: LapState, route: Route, pos: Vec3, vel: Vec3, moving:
   s.ticks++;
 
   const n = route.pieces.length;
-  const p = elementAt(route, pos[0], pos[1], s.next);
+  const p = elementAt(route, pos[0], pos[1], s.next, pos[2]);
 
   // Wrong way: moving against the route direction of the element we are on. Not inside loops:
   // over the top of the ring the car really moves backwards, while going the right way round.

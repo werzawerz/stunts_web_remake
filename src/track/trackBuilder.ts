@@ -432,12 +432,6 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
   const big = 6000;
   gmb.quad([-big, -big, 0], [size + big, -big, 0], [size + big, size + big, 0], [-big, size + big, 0], ground);
 
-  /** Tunnels run through hills at ground level: the tunnel's axis on tile (x, z), if any. */
-  const tunnelAxis = (x: number, z: number): 'NS' | 'EW' | null => {
-    const code = track.elements[x]?.[z];
-    return code === 0x42 ? 'NS' : code === 0x43 ? 'EW' : null;
-  };
-
   // Terrain.
   const waterTiles: [number, number][] = [];
   for (let x = 0; x < GRID; x++) {
@@ -450,23 +444,9 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
         waterTiles.push([x, z]);
         mb.quad([e, n, 0.06], [e + TILE, n, 0.06], [e + TILE, n + TILE, 0.06], [e, n + TILE, 0.06], WATER_COLOR);
       } else if (t.kind === 'hill') {
-        const tunnel = tunnelAxis(x, z);
-        if (!tunnel) {
-          mb.walls(() => mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor, SURFACE.Grass));
-        } else {
-          // A tunnel runs through this hill tile: only the top and the sides along the tunnel.
-          const top = (a: V3, b: V3, c2: V3, d: V3): void => mb.quad(a, b, c2, d, hillColor, SURFACE.Grass);
-          top([e, n, HILL_HEIGHT], [e + TILE, n, HILL_HEIGHT], [e + TILE, n + TILE, HILL_HEIGHT], [e, n + TILE, HILL_HEIGHT]);
-          mb.walls(() => {
-            if (tunnel === 'NS') {
-              mb.quad([e, n, 0], [e, n + TILE, 0], [e, n + TILE, HILL_HEIGHT], [e, n, HILL_HEIGHT], hillColor);
-              mb.quad([e + TILE, n, 0], [e + TILE, n + TILE, 0], [e + TILE, n + TILE, HILL_HEIGHT], [e + TILE, n, HILL_HEIGHT], hillColor);
-            } else {
-              mb.quad([e, n, 0], [e + TILE, n, 0], [e + TILE, n, HILL_HEIGHT], [e, n, HILL_HEIGHT], hillColor);
-              mb.quad([e, n + TILE, 0], [e + TILE, n + TILE, 0], [e + TILE, n + TILE, HILL_HEIGHT], [e, n + TILE, HILL_HEIGHT], hillColor);
-            }
-          });
-        }
+        // Everything on a hill tile sits on top of it, tunnels too (JOES: roads climb slopes to
+        // the tunnels on its hill).
+        mb.walls(() => mb.box(e, n, 0, e + TILE, n + TILE, HILL_HEIGHT, hillColor, SURFACE.Grass));
       } else if (t.kind === 'slope') {
         const fr = FRAME[t.ascent];
         const at = (r: number, f: number, h: number): V3 => [
@@ -512,7 +492,7 @@ export function buildTrack(track: Track, shapes?: Map<string, Shape> | null): Bu
 
   /** Ground height under a tile: hills (terrain 06) raise everything on them to hill level. */
   const baseHeight = (x: number, z: number): number =>
-    decodeTerrain(track.terrain[x]?.[z] ?? 0).kind === 'hill' && !tunnelAxis(x, z) ? HILL_HEIGHT : 0;
+    decodeTerrain(track.terrain[x]?.[z] ?? 0).kind === 'hill' ? HILL_HEIGHT : 0;
   /** Heights at the two ends of a straight on a tile, following a hill slope along its axis. */
   const slopeEnds = (x: number, z: number, dir: Dir): [number, number] => {
     const t = decodeTerrain(track.terrain[x]?.[z] ?? 0);

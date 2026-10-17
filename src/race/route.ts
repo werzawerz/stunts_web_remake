@@ -21,6 +21,8 @@ export interface Route {
   line3d: [number, number, number][];
   /** Per line3d point: on a guided piece (loop), where the car is steered for the driver. */
   guided: boolean[];
+  /** Per line3d point: a take-off point, where the route jumps a gap to the next piece. */
+  lip: boolean[];
 }
 
 const cellKey = (x: number, z: number): number => x * 1000 + z;
@@ -133,15 +135,19 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
   // Centre line in driving order: each piece's path, reversed when driven from its far end.
   const line3d: [number, number, number][] = [];
   const guided: boolean[] = [];
+  const lip: boolean[] = [];
   ordered.forEach((p, i) => {
     const d = dirs[i]!;
     const forward = (p.ends[1][0] - p.ends[0][0]) * d[0] + (p.ends[1][1] - p.ends[0][1]) * d[1] >= 0;
     const pts = forward ? p.path : [...p.path].reverse();
+    const prev = line3d[line3d.length - 1];
+    if (prev && Math.hypot(pts[0]![0] - prev[0], pts[0]![1] - prev[1]) > 2) lip[lip.length - 1] = true;
     for (const q of pts) {
       const last = line3d[line3d.length - 1];
       if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.5) {
         line3d.push(q);
         guided.push(p.kind === 'loop');
+        lip.push(false);
       }
     }
   });
@@ -152,6 +158,7 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     cellIndex,
     line3d,
     guided,
+    lip,
     line: { centre: [(cx + 0.5) * TILE, (cz + 0.5) * TILE], dir: sd },
   };
 }
@@ -159,10 +166,24 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
 /**
  * Index of the route element under a position, or -1 when off the route. Where the route passes a
  * tile twice, the first element at or after `expected` - 1 (the one just reached, or the next one
- * due), else the last one.
+ * due), else the last one. With the car's height `u`, only elements whose road is near that height
+ * count: flying over a road (a jump across a gap) isn't driving on it.
  */
-export function elementAt(route: Route, e: number, n: number, expected = 0): number {
-  const list = route.cellIndex.get(cellKey(Math.floor(e / TILE), Math.floor(n / TILE)));
+export function elementAt(route: Route, e: number, n: number, expected = 0, u?: number): number {
+  let list = route.cellIndex.get(cellKey(Math.floor(e / TILE), Math.floor(n / TILE)));
   if (!list) return -1;
+  if (u !== undefined) {
+    list = list.filter((i) => {
+      const path = route.pieces[i]!.path;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const q of path) {
+        lo = Math.min(lo, q[2]);
+        hi = Math.max(hi, q[2]);
+      }
+      return u > lo - 4 && u < hi + 10;
+    });
+    if (list.length === 0) return -1;
+  }
   return list.find((i) => i >= expected - 1) ?? list[list.length - 1]!;
 }
