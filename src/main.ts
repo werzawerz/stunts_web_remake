@@ -27,6 +27,8 @@ import { Showroom, type ShowroomCar } from './ui/showroom';
 import { loadCarDescription } from './original/carInfo';
 import { TrackSelect, type BestTime } from './ui/trackSelect';
 import { TILE } from './track/constants';
+import { MAX_REPLAY_TICKS, Replay, type Frame } from './race/replay';
+import { ReplayView, type ReplayAction, type ReplayMenuItem } from './ui/replayView';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
@@ -191,7 +193,7 @@ let crash: {
 } | null = null;
 let evalSelected = 1;
 const EVAL_BUTTONS = [
-  { label: ['View', 'Replay'], enabled: false }, // no replays yet
+  { label: ['View', 'Replay'], enabled: true },
   { label: ['Drive'], enabled: true },
   { label: ['Main', 'Menu'], enabled: true },
 ];
@@ -289,6 +291,7 @@ function nameKey(e: KeyboardEvent): void {
 }
 
 function evalActivate(i: number): void {
+  if (i === 0) startReplay('evaluation');
   if (i === 1) resetCar(); // Drive
   if (i === 2) {
     resetCar();
@@ -431,6 +434,10 @@ dash.canvas.addEventListener('click', (e) => {
   const r = dash.canvas.getBoundingClientRect();
   const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
   const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+  if (replayView.visible) {
+    replayAction(replayView.click(x, y, replayItems));
+    return;
+  }
   if (showroom.visible) {
     sound.start();
     if (showroom.click(x, y).type === 'done') showroomDone();
@@ -455,7 +462,152 @@ dash.canvas.addEventListener('click', (e) => {
   });
 });
 
+// ---- replays: the run's inputs re-simulated (the simulation is deterministic) --------------------
+interface RunState {
+  car: CarState;
+  lap: LapState;
+}
+/** Input bitmask of every tick since the car was (re)started, for the replay. */
+let replayLog: number[] = [];
+let replay: Replay<RunState> | null = null;
+let rframe: Frame<RunState> | null = null;
+let replayFrom: 'evaluation' | 'race' = 'race';
+let replayAcc = 0;
+const replayView = new ReplayView();
+void loadPictures('SDGAME.PVS').then((p) => (replayView.pictures = p));
+
+function startReplay(from: 'evaluation' | 'race'): void {
+  const s0 = spec;
+  const pose = startPose;
+  const man = manualGearbox;
+  const w = world;
+  const r = route;
+  replay = new Replay<RunState>(
+    replayLog.slice(),
+    () => ({ car: createCar(s0, pose.pos, pose.heading, 0, man), lap: createLap() }),
+    (st, input) => {
+      stepCar(st.car, s0, input, w);
+      if (r) stepLap(st.lap, r, st.car.pos, st.car.vel, (input & INPUT.Throttle) !== 0 || speedOf(st.car) > 0.5, st.car.crashed);
+    },
+  );
+  replayFrom = from;
+  // From the evaluation the replay plays from the start; mid-race it stops where you are.
+  rframe = replay.frameAt(from === 'evaluation' ? 0 : replay.length);
+  replayAcc = 0;
+  replayView.open(from === 'evaluation' ? 'play' : 'stop');
+}
+
+function replayItems(): ReplayMenuItem[] {
+  const items: ReplayMenuItem[] = ['restart', 'main'];
+  if (replayFrom === 'evaluation') items.push('evaluation');
+  if (rframe && !rframe.state.car.crashed && rframe.state.lap.phase !== 'finished') items.push('continue');
+  return items;
+}
+
+function leaveReplay(): void {
+  replayView.close();
+  replay = null;
+  rframe = null;
+  camInit = false;
+}
+
+function replayAction(a: ReplayAction): void {
+  if (!replay || !rframe) return;
+  if (a.type === 'start') rframe = replay.frameAt(0);
+  else if (a.type === 'item') {
+    if (a.item === 'evaluation') leaveReplay();
+    else if (a.item === 'restart') {
+      leaveReplay();
+      resetCar();
+    } else if (a.item === 'main') {
+      leaveReplay();
+      resetCar();
+      menu.open();
+    } else if (a.item === 'continue') {
+      // Take over the car from this point of the replay.
+      const st = structuredClone(rframe.state);
+      const tick = rframe.tick;
+      leaveReplay();
+      clearCrash();
+      finish = null;
+      car = st.car;
+      lap = st.lap;
+      prevPos = [...car.pos];
+      prevQuat = [...car.quat];
+      replayLog = replayLog.slice(0, tick);
+      inputLog = inputLog.slice(0, lap.ticks);
+    }
+  }
+}
+
+/** TV cameras beside the road every ~180 m of the route, like the original's track cams. */
+function trackCams(): Vec3[] {
+  const line = route?.line3d ?? [];
+  const cams: Vec3[] = [];
+  let run = 180;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1]!;
+    const b = line[i]!;
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    run += d;
+    if (run < 180 || d < 0.01) continue;
+    run = 0;
+    const side = cams.length % 2 === 0 ? 1 : -1;
+    cams.push([b[0] + ((b[1] - a[1]) / d) * 24 * side, b[1] - ((b[0] - a[0]) / d) * 24 * side, b[2] + 7]);
+  }
+  return cams;
+}
+
+function replayCamera(rc: CarState): void {
+  const p = rc.pos;
+  const fwd = quatRotate(rc.quat, [0, 1, 0]);
+  const up = quatRotate(rc.quat, [0, 0, 1]);
+  const hl = Math.hypot(fwd[0], fwd[1]) || 1;
+  let fov = 56;
+  camera.up.set(0, 1, 0);
+  switch (replayView.camera) {
+    case 'inside':
+      camera.position.copy(toThree([p[0] + up[0] * 0.8 - fwd[0] * 0.3, p[1] + up[1] * 0.8 - fwd[1] * 0.3, p[2] + up[2] * 0.8 - fwd[2] * 0.3]));
+      camera.up.copy(toThree(up));
+      camera.lookAt(toThree([p[0] + fwd[0] * 25 + up[0] * 0.8, p[1] + fwd[1] * 25 + up[1] * 0.8, p[2] + fwd[2] * 25 + up[2] * 0.8]));
+      break;
+    case 'overhead':
+      // From above and a little behind, like the original's helicopter.
+      camera.position.copy(toThree([p[0] - (fwd[0] / hl) * 16, p[1] - (fwd[1] / hl) * 16, p[2] + 22]));
+      camera.lookAt(toThree([p[0] + (fwd[0] / hl) * 6, p[1] + (fwd[1] / hl) * 6, p[2]]));
+      break;
+    case 'track': {
+      let best: Vec3 = [p[0] - 30, p[1] - 30, p[2] + 8];
+      let bd = Infinity;
+      for (const c of trackCams()) {
+        const d = Math.hypot(c[0] - p[0], c[1] - p[1]);
+        if (d < bd) {
+          bd = d;
+          best = c;
+        }
+      }
+      camera.position.copy(toThree(best));
+      camera.lookAt(toThree([p[0], p[1], p[2] + 0.8]));
+      // Zoom in on far cars, like a TV camera.
+      fov = Math.min(56, Math.max(8, (2 * Math.atan(9 / Math.max(1, bd)) * 180) / Math.PI));
+      break;
+    }
+    case 'manual': {
+      const yaw = Math.atan2(fwd[1], fwd[0]) + replayView.manualYaw;
+      const d = replayView.manualDist;
+      camera.position.copy(toThree([p[0] + Math.cos(yaw) * d, p[1] + Math.sin(yaw) * d, p[2] + d * 0.35]));
+      camera.lookAt(toThree([p[0], p[1], p[2] + 0.8]));
+      break;
+    }
+  }
+  if (camera.fov !== fov) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+}
+
 function resetCar(): void {
+  replayLog = [];
   car = createCar(spec, startPose.pos, startPose.heading, 0, manualGearbox);
   prevPos = [...car.pos];
   prevQuat = [...car.quat];
@@ -572,6 +724,11 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
     return;
   }
+  if (replayView.visible) {
+    replayAction(replayView.key(e.code, replayItems));
+    e.preventDefault();
+    return;
+  }
   if (showroom.visible) {
     if (showroom.key(e.code).type === 'done') showroomDone();
     e.preventDefault();
@@ -587,8 +744,9 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  // Escape during a race opens the replay panel, stopped where you are, like the original.
   if (e.code === 'Escape') {
-    menu.open();
+    if (!evaluationShown()) startReplay('race');
     return;
   }
   if (evaluationShown() && ['ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'NumpadEnter'].includes(e.code)) {
@@ -667,6 +825,64 @@ const toThree = (v: Vec3): THREE.Vector3 => new THREE.Vector3(v[0], v[2], -v[1])
 renderer.setAnimationLoop((now) => {
   const frameDt = Math.min((now - last) / 1000, 0.1);
   last = now;
+  if (replayView.visible && replay && rframe) {
+    acc = 0;
+    // Advance the replay: play at normal speed, fast play and fast forward faster, rewind back.
+    replayAcc += frameDt;
+    const n = Math.floor(replayAcc / DT);
+    replayAcc -= n * DT;
+    const mode = replayView.mode;
+    if (mode === 'play' || mode === 'fast' || mode === 'forward') {
+      const k = mode === 'play' ? n : mode === 'fast' ? n * 3 : n * 8;
+      for (let i = 0; i < k && rframe.tick < replay.length; i++) replay.advance(rframe);
+      if (rframe.tick >= replay.length) replayView.mode = 'stop';
+    } else if (mode === 'rewind' && n > 0) {
+      rframe = replay.frameAt(rframe.tick - n * 8);
+      if (rframe.tick === 0) replayView.mode = 'stop';
+    }
+    const rc = rframe.state.car;
+    setObjectPose(carObject, rc.pos, rc.quat);
+    carObject.visible = replayView.camera !== 'inside' && !rc.crashed;
+    if (crash) crash.debris.group.visible = false;
+    replayCamera(rc);
+    sound.update({ rpm: rc.rpm, skidding: false, crashed: rc.crashed, silent: mode !== 'play' });
+    horizonView?.follow(camera);
+    renderer.render(scene, camera);
+    let fire: { x: number; y: number; r: number } | null = null;
+    if (rc.crashed && replayView.camera !== 'inside') {
+      const q = toThree([rc.pos[0], rc.pos[1], rc.pos[2] + 0.6]);
+      const dist = q.distanceTo(camera.position);
+      q.project(camera);
+      if (q.z < 1) fire = { x: ((q.x + 1) / 2) * SCREEN_W, y: ((1 - q.y) / 2) * SCREEN_H, r: Math.min(30, Math.max(3, 180 / dist)) };
+    }
+    const inside = replayView.camera === 'inside';
+    const rpl = replay;
+    const rf = rframe;
+    dash.draw({
+      view: inside && !replayView.dashHidden ? 'cockpit' : 'chase',
+      speedKmh: speedOf(rc) * 3.6,
+      rpm: rc.rpm,
+      maxRpm: spec.maxRpm,
+      gear: rc.gear,
+      steer: rc.steer,
+      timeSec: rf.state.lap.ticks / 60,
+      penaltySec: rf.state.lap.penaltySec,
+      wrongWay: false,
+      finished: false,
+      crashed: false,
+      crashReason: '',
+      help: '',
+      crashFx: rc.crashed
+        ? { cracks: inside ? crackLines(rpl.length, SCREEN_W, SCREEN_H) : null, fire, frame: Math.floor(now / 50), pleaseWait: false }
+        : undefined,
+      after: (c) => replayView.draw(c, rf.tick, rpl.length, now),
+    });
+    return;
+  }
+  if (camera.fov !== 56) {
+    camera.fov = 56;
+    camera.updateProjectionMatrix();
+  }
   if (showroom.visible) {
     acc = 0;
     sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
@@ -700,6 +916,7 @@ renderer.setAnimationLoop((now) => {
     const mask = lap.phase === 'finished' ? 0 : raw;
     prevPos = [...car.pos];
     prevQuat = [...car.quat];
+    if (replayLog.length < MAX_REPLAY_TICKS) replayLog.push(mask);
     const wasGrounded = car.grounded;
     const fallSpeed = -car.vel[2];
     const wasCrashed = car.crashed;
@@ -819,7 +1036,7 @@ renderer.setAnimationLoop((now) => {
         : now < flashUntil
           ? flashText
           : car.ticks < 240
-            ? 'ARROWS DRIVE  R RESTART  ESC MENU  C CAMERA  M SOUND'
+            ? 'ARROWS DRIVE  R RESTART  ESC REPLAY/MENU  C CAMERA  M SOUND'
             : '',
   });
 });

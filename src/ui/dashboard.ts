@@ -35,6 +35,8 @@ export interface HudState {
   };
   /** The evaluation screen, covering everything, when set. */
   evaluation?: EvaluationData | null;
+  /** Drawn last, on top of everything else (the replay panel). */
+  after?: (c: CanvasRenderingContext2D) => void;
 }
 
 const formatTime = (t: number): string => {
@@ -110,6 +112,7 @@ export class Dashboard {
       this.text(`+${s.penaltySec}s`, SCREEN_W / 2 + 46, clockY, 9, '#fc5454', 'left');
     if (s.wrongWay && !s.crashed) this.text('Wrong Way', SCREEN_W / 2, 62, 12, '#fcfcfc', 'center');
     if (fx?.pleaseWait) drawPleaseWait(c, SCREEN_W, SCREEN_H);
+    s.after?.(c);
     if (s.help) this.text(s.help, SCREEN_W / 2, s.view === 'cockpit' ? 26 : SCREEN_H - 16, 7, '#fcfcfc', 'center');
   }
 
