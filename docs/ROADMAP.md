@@ -48,14 +48,16 @@ with our own assets, deployed as a playable web page with online lap times.
       (Option menu / G); the lap clock no longer starts while the car settles on the line
 - [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
+- [x] Track editor like the original (Track select → New/Edit Tracks): scrolling 12×11 map, pieces
+      by category, Horizon/Load/New/Save/Done; tracks saved in the browser as TRK bytes and listed
+      with the others (no online times for them)
 
 ## Next (in order)
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
 ## Later
-7. **Track editor** — 30×30 grid editor like the original; save/share tracks via Supabase.
-9. **Sound** — engine pitch from rpm, skids, crash.
-10. **AI opponents** following the track path.
+10. **AI opponents** following the track path (next up).
+11. **Sharing editor tracks** online (Supabase), with their own fastest times.
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
 
 ## Open decisions

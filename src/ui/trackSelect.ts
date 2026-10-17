@@ -14,11 +14,12 @@ export interface BestTime {
 export type TrackSelectAction =
   | { type: 'menu' }
   | { type: 'pick'; index: number }
+  | { type: 'edit' }
   | { type: 'none' };
 
 const BUTTONS = [
   { label: ['More', 'Tracks'], enabled: true },
-  { label: ['New/Edit', 'Tracks'], enabled: false }, // no track editor yet
+  { label: ['New/Edit', 'Tracks'], enabled: true },
   { label: ['Main Menu'], enabled: true },
 ];
 /** Button rectangles (x, y, w, h). */
@@ -104,6 +105,7 @@ export class TrackSelect {
       const sel = this.deps.trackIndex();
       this.list = { items, selected: sel, top: Math.max(0, sel - LIST_ROWS + 1) };
     }
+    if (i === 1) return { type: 'edit' };
     if (i === 2) return { type: 'menu' };
     return { type: 'none' };
   }

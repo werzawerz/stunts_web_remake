@@ -18,9 +18,12 @@ function getClient(): SupabaseClient | null {
   return client;
 }
 
+/** Tracks made in the track editor live only in this browser: they have no online times. */
+export const isOnlineTrack = (trackId: string): boolean => !trackId.startsWith('custom-');
+
 export async function getLeaderboard(trackId: string, limit = 10): Promise<LapTime[]> {
   const db = getClient();
-  if (!db) return [];
+  if (!db || !isOnlineTrack(trackId)) return [];
   const { data, error } = await db
     .from('lap_times')
     .select('player_name, car, time_ms, created_at')
@@ -39,7 +42,7 @@ export async function submitLapTime(lap: {
   inputLogBase64?: string;
 }): Promise<void> {
   const db = getClient();
-  if (!db) return;
+  if (!db || !isOnlineTrack(lap.trackId)) return;
   const { error } = await db.from('lap_times').insert({
     track_id: lap.trackId,
     player_name: lap.playerName,
@@ -53,7 +56,7 @@ export async function submitLapTime(lap: {
 /** The fastest lap on a track that has its inputs stored (for the ghost car), or null. */
 export async function getGhost(trackId: string): Promise<(LapTime & { inputs: number[] }) | null> {
   const db = getClient();
-  if (!db) return null;
+  if (!db || !isOnlineTrack(trackId)) return null;
   const { data, error } = await db
     .from('lap_times')
     .select('player_name, car, time_ms, created_at, input_log_base64')

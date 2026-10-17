@@ -12,7 +12,7 @@ import { buildSampleTrack } from './track/sampleTrack';
 import { fetchOriginal } from './original/files';
 import type { Shape } from './original/formats';
 import { loadTrackShapes } from './original/trackShapes';
-import { parseTrk, type Track } from './track/trkFormat';
+import { parseTrk, serializeTrk, type Track } from './track/trkFormat';
 import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
@@ -32,10 +32,12 @@ import { MAX_REPLAY_TICKS, Replay, type Frame } from './race/replay';
 import { ReplayView, type ReplayAction, type ReplayMenuItem } from './ui/replayView';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
-import { getGhost, getLeaderboard, submitLapTime } from './net/supabase';
+import { getGhost, getLeaderboard, isOnlineTrack, submitLapTime } from './net/supabase';
 import { Ghost, startOnLine } from './race/ghost';
 import { listReplays, saveReplay, type SavedReplay } from './race/replayStore';
 import { CarSound } from './audio/sound';
+import { listTracks, saveTrack } from './track/trackStore';
+import { TrackEditor, type EditorAction } from './ui/trackEditor';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
 const frame = document.createElement('div');
@@ -175,8 +177,25 @@ const TRACKS: TrackEntry[] = [
     },
   })),
 ];
+/** The last track left with Done in the track editor without saving it. */
+let editedTrack: { name: string; track: Track } | null = null;
+const EDITED_ID = 'custom-*';
+/** Put the tracks made in the editor at the end of the list (after a save or an edit). */
+function refreshCustomTracks(): void {
+  for (let i = TRACKS.length - 1; i >= 0; i--) if (TRACKS[i]!.id.startsWith('custom-')) TRACKS.splice(i, 1);
+  for (const t of listTracks()) {
+    const name = t.name;
+    TRACKS.push({ id: `custom-${name}`, name, load: async () => listTracks().find((x) => x.name === name)?.track ?? null });
+  }
+  if (editedTrack) {
+    const e = editedTrack;
+    TRACKS.push({ id: EDITED_ID, name: e.name, load: async () => e.track });
+  }
+  trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === trackId));
+}
 let trackIndex = 0;
 let trackId = 'default';
+refreshCustomTracks();
 let currentTrack: Track = buildSampleTrack();
 // Original track piece shapes, when the player's Stunts files are available.
 let trackShapes: Map<string, Shape> | null = null;
@@ -415,6 +434,41 @@ function trackSelectAction(a: ReturnType<TrackSelect['key']>): void {
     trackSelect.close();
     camInit = false;
   } else if (a.type === 'pick') void selectTrack(a.index, 1, true);
+  else if (a.type === 'edit') {
+    const e = TRACKS[trackIndex]!;
+    trackEditor.open(currentTrack, e.id.startsWith('custom-') && e.id !== EDITED_ID ? e.name : '');
+  }
+}
+
+// ---- track editor (the original's, from Track select → New/Edit Tracks) ------------------------
+const trackEditor = new TrackEditor({
+  trackNames: () => TRACKS.map((t) => t.name),
+  loadTrack: async (i) => {
+    const e = TRACKS[i];
+    const track = e ? await e.load() : null;
+    if (!e || !track) return null;
+    // Only the player's own tracks keep their name: saving an original asks for a new one.
+    return { track, name: e.id.startsWith('custom-') && e.id !== EDITED_ID ? e.name : '' };
+  },
+  save: (name, track) => {
+    const ok = saveTrack(name, track);
+    if (ok) refreshCustomTracks();
+    return ok;
+  },
+});
+
+function editorAction(a: EditorAction): void {
+  if (a.type === 'cancel') trackEditor.close();
+  else if (a.type === 'done') {
+    trackEditor.close();
+    // Drive it as saved when it is, else as the "edited" track at the end of the list.
+    const bytes = serializeTrk(a.track).join();
+    const saved = a.name !== '' && listTracks().some((t) => t.name === a.name && serializeTrk(t.track).join() === bytes);
+    editedTrack = saved ? null : { name: a.name ? `${a.name} (edited)` : 'New track', track: a.track };
+    refreshCustomTracks();
+    const id = saved ? `custom-${a.name}` : EDITED_ID;
+    void selectTrack(Math.max(0, TRACKS.findIndex((t) => t.id === id)), 1, true);
+  }
 }
 
 function showroomDone(): void {
@@ -444,11 +498,36 @@ function menuAction(a: MenuAction): void {
   }
 }
 
+/** A mouse event's position on the 320x200 screen. */
+function screenXY(e: MouseEvent): [number, number] {
+  const r = dash.canvas.getBoundingClientRect();
+  return [((e.clientX - r.left) / r.width) * SCREEN_W, ((e.clientY - r.top) / r.height) * SCREEN_H];
+}
+// The track editor also takes right clicks (erase), mouse moves (cursor) and the wheel (scroll).
+dash.canvas.addEventListener('contextmenu', (e) => {
+  if (!trackEditor.visible) return;
+  e.preventDefault();
+  editorAction(trackEditor.click(...screenXY(e), 2));
+});
+dash.canvas.addEventListener('mousemove', (e) => {
+  if (trackEditor.visible) trackEditor.move(...screenXY(e));
+});
+dash.canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (!trackEditor.visible) return;
+    e.preventDefault();
+    trackEditor.wheel(e.deltaY || e.deltaX, e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY));
+  },
+  { passive: false },
+);
 // Mouse: click a button on the evaluation screen.
 dash.canvas.addEventListener('click', (e) => {
-  const r = dash.canvas.getBoundingClientRect();
-  const x = ((e.clientX - r.left) / r.width) * SCREEN_W;
-  const y = ((e.clientY - r.top) / r.height) * SCREEN_H;
+  const [x, y] = screenXY(e);
+  if (trackEditor.visible) {
+    editorAction(trackEditor.click(x, y));
+    return;
+  }
   if (replayView.visible) {
     replayAction(replayView.click(x, y, replayItems));
     return;
@@ -742,7 +821,8 @@ function onFinish(): void {
     timeSec: finished.ticks / 60,
     penaltySec: finished.penaltySec,
     rows: null,
-    prompt: { text: loadName(), status: '', busy: false },
+    // Tracks made in the editor have no online fastest times.
+    prompt: isOnlineTrack(trackId) ? { text: loadName(), status: '', busy: false } : null,
     submit: async (name) => {
       let bin = '';
       for (const b of log) bin += String.fromCharCode(b);
@@ -858,6 +938,11 @@ window.addEventListener('keydown', (e) => {
   }
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
+    return;
+  }
+  if (trackEditor.visible) {
+    editorAction(trackEditor.key(e));
+    e.preventDefault();
     return;
   }
   if (replayView.visible && replayView.typing) {
@@ -1059,6 +1144,12 @@ renderer.setAnimationLoop((now) => {
   if (camera.fov !== 56) {
     camera.fov = 56;
     camera.updateProjectionMatrix();
+  }
+  if (trackEditor.visible) {
+    acc = 0;
+    sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
+    dash.drawScreen((c) => trackEditor.draw(c, now));
+    return;
   }
   if (showroom.visible) {
     acc = 0;

@@ -128,6 +128,9 @@ table.set(0x3e, { kind: 'chicane', axis: 'NS', from: 'E' });
 table.set(0x3d, { kind: 'chicane', axis: 'EW', from: 'W' });
 table.set(0x3f, { kind: 'chicane', axis: 'EW', from: 'E' });
 add4([0x34, 0x35, 0x36, 0x37], (i) => ({ kind: 'corner', surface: 'paved', size: 'large', edges: CORNER_EDGES[i]!, banked: true }));
+// Corkscrew up/down (2x2, turning while it climbs onto elevated road): flat large corners for now.
+// Same shape rotations as the large corners (rot 0, 3, 2, 1).
+for (const base of [0x75, 0x79]) add4([base, base + 1, base + 2, base + 3], (i) => ({ kind: 'corner', surface: 'paved', size: 'large', edges: CORNER_EDGES[[1, 0, 2, 3][i]!]! }));
 add4([0x3a, 0x39, 0x3b, 0x38], (i) => ({ kind: 'ramp', style: 'bridge', dir: TRAVEL[i]! }));
 table.set(0x63, { kind: 'elevatedRoad', axis: 'NS', solid: true });
 table.set(0x64, { kind: 'elevatedRoad', axis: 'EW', solid: true });
