@@ -22,7 +22,7 @@ import { crackLines } from './ui/crash';
 import { buttonRects, type EvalRow, type EvaluationData } from './ui/evaluation';
 import { bodyColour, Debris } from './render/debris';
 import { MainMenu, type MenuAction } from './ui/menu';
-import { loadPictures } from './original/screens';
+import { loadHorizonPanorama, loadPictures } from './original/screens';
 import { Showroom, type ShowroomCar } from './ui/showroom';
 import { loadCarDescription } from './original/carInfo';
 import { TrackSelect, type BestTime } from './ui/trackSelect';
@@ -757,6 +757,34 @@ function onFinish(): void {
   fetchRows((rows) => (f.rows = rows));
 }
 
+// The original's horizon pictures (DESERT.PVS...), when the player's files have them.
+const HORIZON_FILES: Partial<Record<Horizon, string>> = {
+  [Horizon.Desert]: 'DESERT.PVS',
+  [Horizon.Tropical]: 'TROPICAL.PVS',
+  [Horizon.Alpine]: 'ALPINE.PVS',
+  [Horizon.City]: 'CITY.PVS',
+  [Horizon.Country]: 'COUNTRY.PVS',
+};
+const panoramas = new Map<Horizon, HTMLCanvasElement | null>();
+
+function setHorizon(h: Horizon): void {
+  if (horizonView) {
+    scene.remove(horizonView.group);
+    horizonView.dispose();
+  }
+  horizonView = createHorizon(h, panoramas.get(h) ?? null);
+  scene.add(horizonView.group);
+  renderer.setClearColor(horizonView.fogColor);
+  const file = HORIZON_FILES[h];
+  if (file && !panoramas.has(h)) {
+    panoramas.set(h, null);
+    void loadHorizonPanorama(file).then((p) => {
+      panoramas.set(h, p);
+      if (p && currentTrack.horizon === h) setHorizon(h);
+    });
+  }
+}
+
 function loadScene(track: Track): void {
   if (trackGroup) {
     scene.remove(trackGroup);
@@ -766,10 +794,6 @@ function loadScene(track: Track): void {
         (o.material as THREE.Material).dispose();
       }
     });
-  }
-  if (horizonView) {
-    scene.remove(horizonView.group);
-    horizonView.dispose();
   }
   const built = buildTrack(track, trackShapes);
   trackGroup = built.group;
@@ -787,9 +811,7 @@ function loadScene(track: Track): void {
     const hit = world.raycast([e, n, 300], [0, 0, -1], 400);
     startPose = { pos: [e, n, (hit ? 300 - hit.t : 0) + 1], heading: start.dir };
   }
-  horizonView = createHorizon(track.horizon);
-  scene.add(horizonView.group);
-  renderer.setClearColor(horizonView.fogColor);
+  setHorizon(track.horizon);
   resetCar();
   spawnFromParam();
   loadGhost();
@@ -934,6 +956,26 @@ if (camParam) {
   fly.yaw = (yaw * Math.PI) / 180;
   fly.pitch = (pitch * Math.PI) / 180;
   view = 'free';
+}
+
+/**
+ * The chase camera's position, brought in front of anything between it and the car (the deck of
+ * a ramp behind you, a pipe wall), so the car never disappears behind the track.
+ */
+function unblocked(focus: Vec3, cam: THREE.Vector3): THREE.Vector3 {
+  const to: Vec3 = [cam.x, -cam.z, cam.y];
+  const d: Vec3 = [to[0] - focus[0], to[1] - focus[1], to[2] - focus[2]];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 1) return cam;
+  const dir: Vec3 = [d[0] / len, d[1] / len, d[2] / len];
+  let t = len;
+  const surface = world.raycast(focus, dir, len);
+  if (surface) t = Math.min(t, surface.t);
+  const wall = world.sweep(focus, to);
+  if (wall) t = Math.min(t, wall.t * len);
+  if (t >= len) return cam;
+  const k = Math.max(1.5, t - 0.8);
+  return toThree([focus[0] + dir[0] * k, focus[1] + dir[1] * k, focus[2] + dir[2] * k]);
 }
 
 // ---- main loop: fixed 60 Hz simulation, interpolated rendering -----------------------------
@@ -1121,7 +1163,7 @@ renderer.setAnimationLoop((now) => {
       camPos.copy(target);
       camInit = true;
     } else camPos.lerp(target, 1 - Math.exp(-5 * frameDt));
-    camera.position.copy(camPos);
+    camera.position.copy(unblocked([pos[0], pos[1], pos[2] + 1.3], camPos));
     camera.lookAt(toThree([pos[0], pos[1], pos[2] + 1.3]));
   } else {
     camera.up.set(0, 1, 0);

@@ -84,13 +84,68 @@ class Tris {
 
 const ring = (a: number, r: number, y: number): number[] => [Math.cos(a) * r, y, Math.sin(a) * r];
 
-export function createHorizon(h: Horizon): HorizonView {
-  const look = LOOKS[h];
+/**
+ * The original's panorama (1024 pixels round, see original/screens.ts) on a cylinder around the
+ * camera: north first, then clockwise. Each pixel spans 360/1024 degrees, as on the original screen.
+ */
+function panoramaBand(pano: HTMLCanvasElement): THREE.Mesh {
+  const tex = new THREE.CanvasTexture(pano);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.RepeatWrapping;
+  const segs = 128;
+  const top = RADIUS * Math.tan((pano.height * 2 * Math.PI) / pano.width);
+  const pos: number[] = [];
+  const uv: number[] = [];
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2;
+    const a1 = ((i + 1) / segs) * Math.PI * 2;
+    const p = (a: number, y: number): number[] => [Math.sin(a) * RADIUS, y, -Math.cos(a) * RADIUS];
+    const [u0, u1] = [i / segs, (i + 1) / segs];
+    const quad = [p(a0, -2), p(a1, -2), p(a1, top), p(a0, -2), p(a1, top), p(a0, top)];
+    const quv = [u0, 0, u1, 0, u1, 1, u0, 0, u1, 1, u0, 1];
+    for (const q of quad) pos.push(q[0]!, q[1]!, q[2]!);
+    uv.push(...quv);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const m = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, fog: false, depthWrite: false });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.renderOrder = -1;
+  return mesh;
+}
+
+/** Sky colour of a panorama: the commonest colour along the top of each strip (all share it). */
+function panoramaSky(pano: HTMLCanvasElement): number | null {
+  const w = pano.width;
+  const d = pano.getContext('2d')!.getImageData(0, 0, w, pano.height).data;
+  const counts = new Map<number, number>();
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < pano.height; y++) {
+      const i = (y * w + x) * 4;
+      if (d[i + 3]! === 0) continue;
+      const c = (d[i]! << 16) | (d[i + 1]! << 8) | d[i + 2]!;
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+      break;
+    }
+  }
+  let best: number | null = null;
+  let n = 0;
+  for (const [c, k] of counts) if (k > n) [best, n] = [c, k];
+  return best;
+}
+
+/** @param pano the original's horizon panorama, when the player's files have it */
+export function createHorizon(h: Horizon, pano: HTMLCanvasElement | null = null): HorizonView {
+  const look = { ...LOOKS[h] };
+  if (pano) look.sky = panoramaSky(pano) ?? look.sky;
   const rand = mulberry32(1000 + h);
   const t = new Tris();
 
-  // Far layer.
-  const segs = 72;
+  // Far layer (our own drawing, when the original panorama isn't available).
+  const segs = pano ? 0 : 72;
   const heights: number[] = [];
   for (let i = 0; i < segs; i++) {
     const r = rand();
@@ -133,7 +188,7 @@ export function createHorizon(h: Horizon): HorizonView {
   }
 
   // Near band: a low, dark, ragged tree line slightly in front of the far layer.
-  const nearSegs = 180;
+  const nearSegs = pano ? 0 : 180;
   for (let i = 0; i < nearSegs; i++) {
     const a0 = (i / nearSegs) * Math.PI * 2;
     const a1 = ((i + 1) / nearSegs) * Math.PI * 2;
@@ -163,6 +218,8 @@ export function createHorizon(h: Horizon): HorizonView {
   const mesh = t.mesh();
   const group = new THREE.Group();
   group.add(mesh);
+  const band = pano ? panoramaBand(pano) : null;
+  if (band) group.add(band);
   const sky = new THREE.Color();
   sky.setRGB(
     vgaQuantize(((look.sky >> 16) & 255) / 255),
@@ -180,6 +237,12 @@ export function createHorizon(h: Horizon): HorizonView {
     dispose() {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
+      if (band) {
+        band.geometry.dispose();
+        const m = band.material as THREE.MeshBasicMaterial;
+        m.map?.dispose();
+        m.dispose();
+      }
     },
   };
 }
