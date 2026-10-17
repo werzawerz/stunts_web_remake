@@ -21,11 +21,15 @@ export interface EvaluationData {
   /** Fastest times (up to 7); null while loading or offline. */
   rows: EvalRow[] | null;
   elapsed: string;
+  /** Shortcut penalty included in the elapsed time (seconds), if any. */
+  penaltySec?: number;
   averageMph: number;
   impactMph: number | null;
   topMph: number;
   buttons: EvalButton[];
   selected: number;
+  /** Name entry for the online fastest times, drawn as the original's black box. */
+  prompt?: { title: string; text: string; status: string } | null;
 }
 
 const GREY = '#a8a8a8';
@@ -95,11 +99,35 @@ export function drawEvaluation(c: CanvasRenderingContext2D, d: EvaluationData): 
 
   const lines = [
     `Elapsed time: ${d.elapsed}`,
+    ...(d.penaltySec ? [`Penalty time: ${d.penaltySec} sec`] : []),
     `Average speed: ${String(Math.round(d.averageMph)).padStart(4)} Mph`,
     ...(d.impactMph !== null ? [`Impact speed: ${String(Math.round(d.impactMph)).padStart(4)} Mph`] : []),
     `Top speed: ${String(Math.round(d.topMph)).padStart(4)} Mph`,
   ];
   lines.forEach((t, i) => outlined(c, t, 160, 111 + i * 10, 'center'));
+
+  if (d.prompt) {
+    const w = 200;
+    const h = 40;
+    const x = 60;
+    const y = 56;
+    c.fillStyle = '#000000';
+    c.fillRect(x, y, w, h);
+    c.strokeStyle = '#a80000';
+    c.lineWidth = 1;
+    c.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
+    c.font = 'bold 8px monospace';
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    c.fillStyle = LIGHT;
+    c.fillText(d.prompt.title, x + 9, y + 11);
+    const cursor = Math.floor(performance.now() / 400) % 2 === 0 ? '_' : ' ';
+    c.fillStyle = '#fcfc54';
+    c.fillText(d.prompt.text + cursor, x + 9, y + 22);
+    c.fillStyle = '#a8a8a8';
+    c.font = '7px monospace';
+    c.fillText(d.prompt.status, x + 9, y + 32);
+  }
 
   buttonRects(d.buttons.length).forEach(([x, y, w, h], i) => {
     const b = d.buttons[i]!;

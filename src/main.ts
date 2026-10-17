@@ -17,7 +17,7 @@ import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
 import { Dashboard, SCREEN_H, SCREEN_W, type HudState } from './ui/dashboard';
-import { formatRaceTime, ResultsPanel, typingInForm } from './ui/results';
+import { formatRaceTime, loadName, saveName, typingInForm } from './ui/results';
 import { crackLines } from './ui/crash';
 import { buttonRects, type EvalRow, type EvaluationData } from './ui/evaluation';
 import { bodyColour, Debris } from './render/debris';
@@ -173,7 +173,6 @@ let route: Route | null = null;
 let lap: LapState = createLap();
 /** Input bitmask of every tick since the clock started: enough to replay or verify the lap. */
 let inputLog: number[] = [];
-const results = new ResultsPanel(frame);
 
 // ---- crash sequence, as in the original: cracked windscreen / explosion, "Please Wait...", then
 // the evaluation screen with the track's fastest times and the run's figures.
@@ -196,6 +195,24 @@ const EVAL_BUTTONS = [
 ];
 const PLEASE_WAIT_AT = 3.0;
 const EVALUATION_AT = 3.8;
+/** After the finish line the car rolls on a little before the evaluation screen. */
+const FINISH_WAIT_AT = 1.8;
+const FINISH_EVAL_AT = 2.6;
+let finish: {
+  at: number;
+  timeSec: number;
+  penaltySec: number;
+  rows: EvalRow[] | null;
+  /** Name entry for the online fastest times; null once saved or skipped. */
+  prompt: { text: string; status: string; busy: boolean } | null;
+  submit: (name: string) => Promise<void>;
+} | null = null;
+
+function fetchRows(set: (rows: EvalRow[]) => void): void {
+  getLeaderboard(trackId)
+    .then((rows) => set((rows ?? []).map((r) => ({ name: r.player_name, car: r.car, time: formatRaceTime(r.time_ms / 1000) }))))
+    .catch(() => set([]));
+}
 
 function onCrash(impactSpeed: number, vel: Vec3): void {
   const seed = (car.ticks * 2654435761) >>> 0;
@@ -204,11 +221,7 @@ function onCrash(impactSpeed: number, vel: Vec3): void {
   crash = { at: performance.now(), seed, cracks: crackLines(seed, SCREEN_W, SCREEN_H), debris, impact: impactSpeed, rows: null };
   evalSelected = 1;
   const c = crash;
-  getLeaderboard(trackId)
-    .then((rows) => {
-      c.rows = (rows ?? []).map((r) => ({ name: r.player_name, car: r.car, time: formatRaceTime(r.time_ms / 1000) }));
-    })
-    .catch(() => (c.rows = []));
+  fetchRows((rows) => (c.rows = rows));
 }
 
 function clearCrash(): void {
@@ -219,21 +232,58 @@ function clearCrash(): void {
 }
 
 const crashSeconds = (): number => (crash ? (performance.now() - crash.at) / 1000 : 0);
-const evaluationShown = (): boolean => crash !== null && crashSeconds() >= EVALUATION_AT;
+const finishSeconds = (): number => (finish ? (performance.now() - finish.at) / 1000 : 0);
+const evaluationShown = (): boolean =>
+  (crash !== null && crashSeconds() >= EVALUATION_AT) || (finish !== null && finishSeconds() >= FINISH_EVAL_AT);
+const naming = (): boolean => evaluationShown() && finish?.prompt != null;
 
 function evaluationData(): EvaluationData | null {
-  if (!crash || !evaluationShown()) return null;
+  if (!evaluationShown()) return null;
   const entry = TRACKS[trackIndex]!;
-  return {
+  const common = {
     trackName: entry.id.startsWith('orig-') ? entry.id.slice(5) : entry.name,
-    rows: crash.rows,
-    elapsed: 'DNF',
     averageMph: runStats.seconds > 0 ? (runStats.distance / runStats.seconds) * MPH : 0,
-    impactMph: crash.impact * MPH,
     topMph: runStats.top * MPH,
     buttons: EVAL_BUTTONS,
     selected: evalSelected,
   };
+  if (finish) {
+    const p = finish.prompt;
+    return {
+      ...common,
+      rows: finish.rows,
+      elapsed: formatRaceTime(finish.timeSec + finish.penaltySec),
+      penaltySec: finish.penaltySec,
+      impactMph: null,
+      prompt: p ? { title: 'Enter your name:', text: p.text, status: p.status || 'Enter: save   Esc: skip' } : null,
+    };
+  }
+  return { ...common, rows: crash!.rows, elapsed: 'DNF', impactMph: crash!.impact * MPH };
+}
+
+/** Typing the name for the fastest times: letters, Backspace, Enter saves, Escape skips. */
+function nameKey(e: KeyboardEvent): void {
+  const f = finish!;
+  const p = f.prompt!;
+  if (p.busy) return;
+  if (e.key === 'Escape') f.prompt = null;
+  else if (e.key === 'Backspace') p.text = p.text.slice(0, -1);
+  else if (e.key === 'Enter') {
+    const name = p.text.trim();
+    if (!name) return;
+    saveName(name);
+    p.busy = true;
+    p.status = 'Saving...';
+    f.submit(name)
+      .then(() => {
+        f.prompt = null;
+        fetchRows((rows) => (f.rows = rows));
+      })
+      .catch((err: unknown) => {
+        p.busy = false;
+        p.status = `Could not save: ${err instanceof Error ? err.message : String(err)}`.slice(0, 40);
+      });
+  } else if (e.key.length === 1 && p.text.length < 20) p.text += e.key;
 }
 
 function evalActivate(i: number): void {
@@ -356,32 +406,35 @@ function resetCar(): void {
   inputLog = [];
   runStats = { top: 0, distance: 0, seconds: 0 };
   clearCrash();
-  results.hide();
+  finish = null;
 }
 
-function refreshLeaderboard(): void {
-  getLeaderboard(trackId)
-    .then((rows) => results.setLeaderboard(rows))
-    .catch(() => results.setLeaderboard(null));
-}
-
+/** Over the line: roll out, "Please Wait...", then the evaluation screen with the name entry. */
 function onFinish(): void {
   const finished = lap;
   const log = Uint8Array.from(inputLog);
   const carLabel = carName().slice(0, 30);
-  results.show({ timeSec: finished.ticks / 60, penaltySec: finished.penaltySec, carName: carLabel }, async (name) => {
-    let bin = '';
-    for (const b of log) bin += String.fromCharCode(b);
-    await submitLapTime({
-      trackId: trackId,
-      playerName: name.slice(0, 20),
-      car: carLabel,
-      timeMs: Math.round(lapTotal(finished) * 1000),
-      inputLogBase64: btoa(bin),
-    });
-    refreshLeaderboard();
-  });
-  refreshLeaderboard();
+  const f: NonNullable<typeof finish> = {
+    at: performance.now(),
+    timeSec: finished.ticks / 60,
+    penaltySec: finished.penaltySec,
+    rows: null,
+    prompt: { text: loadName(), status: '', busy: false },
+    submit: async (name) => {
+      let bin = '';
+      for (const b of log) bin += String.fromCharCode(b);
+      await submitLapTime({
+        trackId: trackId,
+        playerName: name.slice(0, 20),
+        car: carLabel,
+        timeMs: Math.round(lapTotal(finished) * 1000),
+        inputLogBase64: btoa(bin),
+      });
+    },
+  };
+  finish = f;
+  evalSelected = 1;
+  fetchRows((rows) => (f.rows = rows));
 }
 
 function loadScene(track: Track): void {
@@ -452,6 +505,11 @@ async function selectTrack(i: number, step = 1, quiet = false): Promise<void> {
 window.addEventListener('keydown', (e) => {
   // Browsers only allow sound after a user gesture: the first key press turns it on.
   sound.start();
+  if (naming()) {
+    nameKey(e);
+    e.preventDefault();
+    return;
+  }
   if (typingInForm(e)) {
     if (e.code === 'Escape') (e.target as HTMLElement).blur();
     return;
@@ -564,7 +622,7 @@ renderer.setAnimationLoop((now) => {
   acc += frameDt;
   while (acc >= DT) {
     const raw = input.mask();
-    if (raw & INPUT.Reset) resetCar();
+    if (raw & INPUT.Reset && !naming()) resetCar(); // R types a letter in the name box
     // After the finish the car just rolls out.
     const mask = lap.phase === 'finished' ? 0 : raw;
     prevPos = [...car.pos];
@@ -575,7 +633,7 @@ renderer.setAnimationLoop((now) => {
     const speedBefore = speedOf(car);
     const velBefore: Vec3 = [...car.vel];
     stepCar(car, spec, mask, world);
-    if (!wasCrashed && car.crashed) onCrash(speedBefore, velBefore);
+    if (!wasCrashed && car.crashed && !finish) onCrash(speedBefore, velBefore);
     if (lap.phase === 'running' && !car.crashed) {
       const v = speedOf(car);
       runStats.top = Math.max(runStats.top, v);
@@ -647,7 +705,7 @@ renderer.setAnimationLoop((now) => {
   // ~70 mph (31 m/s) on asphalt at grip 1 (sooner on dirt and ice).
   const mu = spec.grip * (spec.surfaceGrip[car.surface] ?? 1);
   const skidding = car.grounded && car.sliding && speedOf(car) > 31 * Math.sqrt(mu);
-  sound.update({ rpm: car.rpm, skidding, crashed: car.crashed });
+  sound.update({ rpm: car.rpm, skidding, crashed: car.crashed, silent: evaluationShown() });
 
   horizonView?.follow(camera);
   renderer.render(scene, camera);
@@ -663,6 +721,9 @@ renderer.setAnimationLoop((now) => {
       if (p.z < 1) fire = { x: ((p.x + 1) / 2) * SCREEN_W, y: ((1 - p.y) / 2) * SCREEN_H, r: Math.min(30, Math.max(3, 180 / dist)) };
     }
     crashFx = { cracks: crash.cracks, fire, frame: Math.floor(now / 50), pleaseWait: t >= PLEASE_WAIT_AT && t < EVALUATION_AT };
+  } else if (finish) {
+    const t = finishSeconds();
+    crashFx = { cracks: null, fire: null, frame: 0, pleaseWait: t >= FINISH_WAIT_AT && t < FINISH_EVAL_AT };
   }
   dash.draw({
     view,
