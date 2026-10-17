@@ -44,8 +44,6 @@ with our own assets, deployed as a playable web page with online lap times.
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
 
 ## Next (in order)
-2a. **Import any `.TRK` from disk** ("More Tracks" list; leaderboard keyed by track content —
-   needs anonymous inserts into `tracks`, a database change to agree first).
 5. Digital speed readouts in the cockpits that have them.
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
