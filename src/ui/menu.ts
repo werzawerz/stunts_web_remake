@@ -5,12 +5,13 @@ import type { Sprite } from '../original/cockpit';
  * Track, Option); left/right moves a yellow frame between them, Enter picks. The picture is the
  * original's (SDMSEL.PVS, read from the player's files); without it we draw our own stand-in.
  * Sub-screens use the original's options box: black, red frame, white items, the current one
- * inverted. Car opens the showroom; Track is a simple list until the track viewer exists.
+ * inverted. Car opens the showroom, Track the track selection screen.
  */
 
 export type MenuAction =
   | { type: 'drive' }
   | { type: 'showroom' }
+  | { type: 'trackselect' }
   | { type: 'car'; index: number }
   | { type: 'track'; index: number }
   | { type: 'sound'; on: boolean }
@@ -102,9 +103,8 @@ export class MainMenu {
     const label = ITEMS[i]!.label;
     if (label === "Let's Drive") return { type: 'drive' };
     if (label === 'Car') return { type: 'showroom' };
-    if (label === 'Track') {
-      this.screen = { kind: 'list', title: 'Choose a track', items: this.opts.tracks(), selected: this.opts.trackIndex(), pick: (k) => ({ type: 'track', index: k }) };
-    } else if (label === 'Option') {
+    if (label === 'Track') return { type: 'trackselect' };
+    if (label === 'Option') {
       this.optionsScreen(0);
     } else {
       this.screen = { kind: 'message', title: 'Opponent', lines: ['No opponents yet:', 'you race against the clock.'] };

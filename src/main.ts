@@ -25,6 +25,8 @@ import { MainMenu, type MenuAction } from './ui/menu';
 import { loadPictures } from './original/screens';
 import { Showroom, type ShowroomCar } from './ui/showroom';
 import { loadCarDescription } from './original/carInfo';
+import { TrackSelect, type BestTime } from './ui/trackSelect';
+import { TILE } from './track/constants';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
 import { getLeaderboard, submitLapTime } from './net/supabase';
@@ -352,6 +354,56 @@ void loadPictures('SDGAME2.PVS').then((p) => {
 });
 void loadPictures('SDCSEL.PVS').then((p) => showroom.setPictures(p?.get('stop') ?? null, p?.get('grap') ?? null));
 
+// ---- track selection (the original's overview of the track) ------------------------------------
+const bestTimes = new Map<string, BestTime | null>();
+function bestTime(): BestTime | null | undefined {
+  const id = trackId;
+  if (!bestTimes.has(id)) {
+    bestTimes.set(id, null);
+    getLeaderboard(id, 1)
+      .then((rows) => {
+        const r = rows?.[0];
+        bestTimes.set(id, r ? { name: r.player_name, car: r.car, time: formatRaceTime(r.time_ms / 1000) } : null);
+      })
+      .catch(() => bestTimes.set(id, null));
+  }
+  return bestTimes.get(id);
+}
+const trackSelect = new TrackSelect({
+  trackName: () => {
+    const e = TRACKS[trackIndex]!;
+    return e.id.startsWith('orig-') ? e.id.slice(5) : e.name;
+  },
+  best: bestTime,
+  tracks: () => TRACKS.map((t) => t.name),
+  trackIndex: () => trackIndex,
+});
+
+/** Camera over the track, looking at it from the south at an angle, like the original's view. */
+function overviewCamera(): void {
+  let x0 = 30, x1 = -1, z0 = 30, z1 = -1;
+  for (let x = 0; x < 30; x++)
+    for (let z = 0; z < 30; z++)
+      if (currentTrack.elements[x]?.[z]) {
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+        z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+      }
+  if (x1 < 0) [x0, x1, z0, z1] = [0, 29, 0, 29];
+  const ce = ((x0 + x1 + 1) / 2) * TILE;
+  const cn = ((z0 + z1 + 1) / 2) * TILE;
+  const ext = Math.max(x1 - x0 + 1, (z1 - z0 + 1) * 1.3) * TILE;
+  camera.up.set(0, 1, 0);
+  camera.position.set(ce, ext * 0.36, -(cn - ext * 0.72));
+  camera.lookAt(ce, 0, -(cn + ext * 0.1));
+}
+
+function trackSelectAction(a: ReturnType<TrackSelect['key']>): void {
+  if (a.type === 'menu') {
+    trackSelect.close();
+    camInit = false;
+  } else if (a.type === 'pick') void selectTrack(a.index, 1, true);
+}
+
 function showroomDone(): void {
   manualGearbox = showroom.manual;
   carPaint = showroom.paint;
@@ -361,6 +413,7 @@ function showroomDone(): void {
 
 function menuAction(a: MenuAction): void {
   if (a.type === 'showroom') showroom.open(carIndex, carPaint, manualGearbox);
+  else if (a.type === 'trackselect') trackSelect.open();
   else if (a.type === 'drive') {
     menu.close();
     resetCar();
@@ -381,6 +434,11 @@ dash.canvas.addEventListener('click', (e) => {
   if (showroom.visible) {
     sound.start();
     if (showroom.click(x, y).type === 'done') showroomDone();
+    return;
+  }
+  if (trackSelect.visible) {
+    sound.start();
+    trackSelectAction(trackSelect.click(x, y));
     return;
   }
   if (menu.visible) {
@@ -519,6 +577,11 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  if (trackSelect.visible) {
+    trackSelectAction(trackSelect.key(e.code));
+    e.preventDefault();
+    return;
+  }
   if (menu.visible) {
     menuAction(menu.key(e.code));
     e.preventDefault();
@@ -610,6 +673,16 @@ renderer.setAnimationLoop((now) => {
     showroom.update(frameDt);
     showroom.render(renderer);
     dash.drawScreen((c) => showroom.drawPanel(c, now));
+    return;
+  }
+  if (trackSelect.visible) {
+    acc = 0;
+    sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
+    carObject.visible = false;
+    overviewCamera();
+    horizonView?.follow(camera);
+    renderer.render(scene, camera);
+    dash.drawScreen((c) => trackSelect.draw(c, now));
     return;
   }
   if (menu.visible) {

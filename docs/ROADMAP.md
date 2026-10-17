@@ -37,12 +37,15 @@ with our own assets, deployed as a playable web page with online lap times.
 
 - [x] Sound effects modelled on recordings of the original (engine, tyre squeal, crash, bump)
 - [x] Crash sequence and evaluation screen like the original; main menu (the original's picture
-      from the local files, five signs; Track as a simple list, Option box, Escape opens it)
+      from the local files, five signs; Option box, Escape opens it)
+- [x] Track selection like the original (overview of the track, fastest time, More Tracks list);
+      finish screen in the evaluation style with name entry; the original explosion frames
 - [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
 
 ## Next (in order)
-2a. **Import any `.TRK` from disk** (file picker; leaderboard keyed by track content).
+2a. **Import any `.TRK` from disk** ("More Tracks" list; leaderboard keyed by track content —
+   needs anonymous inserts into `tracks`, a database change to agree first).
 5. Digital speed readouts in the cockpits that have them.
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
