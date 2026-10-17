@@ -11,7 +11,7 @@ const G = 9.81;
 /** Speed (m/s) to crest a hill top or ramp lip at when a bend follows: the car lands in time. */
 const CREST_SPEED = 14;
 /** Bends this far (m) past a crest count as following it. */
-const CREST_REACH = 60;
+const CREST_REACH = 100;
 
 export class Autopilot {
   private idx = 0;
@@ -95,15 +95,18 @@ export class Autopilot {
     if (side > 0.03) mask |= INPUT.Left;
     else if (side < -0.03) mask |= INPUT.Right;
 
-    // Speed: limited by the tightest horizontal bend in the next stretch of road.
+    // Speed: limited by the tightest horizontal bend in the next stretch of road, with the grip
+    // of the surface the car is on (dirt and ice corners are slower).
+    const grip = this.spec.grip * (this.spec.surfaceGrip[car.surface] ?? 1);
     let limit = this.cruise;
     const step = 8;
     let prev = this.ahead(0);
     let cur = this.ahead(step);
-    // Where the road tips over a crest (a hill top, a ramp lip) into a real descent (> 6 m): fast
-    // cars fly off there and can't steer until they land.
+    // Where the road tips over a crest (a hill top, the end of an elevated road) into a real descent
+    // (> 6 m): fast cars fly off there and can't steer until they land. Not ramp lips reached
+    // climbing: those are jumps (gaps between bridge ramps) and want speed.
     let crest = -1;
-    for (let d = 2 * step; d <= 90; d += step) {
+    for (let d = 2 * step; d <= 140; d += step) {
       const next = this.ahead(d);
       const ax = cur[0] - prev[0];
       const ay = cur[1] - prev[1];
@@ -116,14 +119,20 @@ export class Autopilot {
       const steep = Math.abs(cur[2] - prev[2]) > la * 0.5 || Math.abs(next[2] - cur[2]) > lb * 0.5;
       // Bends beyond a loop are for later: a loop has to be entered fast or the car falls off.
       if (steep) break;
-      if (crest < 0 && la > 0.5 && lb > 0.5 && (cur[2] - prev[2]) / la - (next[2] - cur[2]) / lb > 0.15 && this.ahead(d + 2 * step)[2] < cur[2] - 6) {
-        crest = d - step;
+      if (crest < 0 && la > 0.5 && lb > 0.5 && (cur[2] - prev[2]) / la - (next[2] - cur[2]) / lb > 0.15) {
+        // A jump: bends beyond it are for after landing. With nothing to slow for before it, take
+        // off flat out (gaps between bridge ramps need more than the usual cruising speed).
+        if ((cur[2] - prev[2]) / la > 0.2 && cur[2] > 10) {
+          if (limit >= this.cruise) limit = Infinity;
+          break;
+        }
+        if (this.ahead(d + 2 * step)[2] < cur[2] - 6) crest = d - step;
       }
       if (la > 0.5 && lb > 0.5 && !this.guidedAhead(d - step)) {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
           const radius = step / turn;
-          const vCorner = Math.sqrt(0.75 * this.spec.grip * G * radius);
+          const vCorner = Math.sqrt(0.75 * grip * G * radius);
           // Allow for braking distance to reach that speed by the bend.
           const reach = Math.sqrt(vCorner * vCorner + 2 * this.spec.brakeDecel * 0.8 * (d - step));
           if (reach < limit) limit = reach;
