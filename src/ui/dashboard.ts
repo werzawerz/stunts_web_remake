@@ -51,6 +51,8 @@ export class Dashboard {
   private scale = 1;
   /** Original cockpit of the current car, if the Stunts files are available. */
   original: Cockpit | null = null;
+  /** The original's explosion frames (SDGAME2.PVS ex01..ex03), if available. */
+  explosion: Sprite[] = [];
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -87,7 +89,16 @@ export class Dashboard {
     const fx = s.crashFx;
     // The cracked windscreen is behind the dashboard, like the original's.
     if (fx?.cracks && s.view === 'cockpit') drawCracks(c, fx.cracks);
-    if (fx?.fire && s.view !== 'cockpit') drawFireball(c, fx.fire.x, fx.fire.y, fx.fire.r, fx.frame);
+    if (fx?.fire && s.view !== 'cockpit') {
+      const sp = this.explosion[Math.floor(fx.frame / 2) % Math.max(1, this.explosion.length)];
+      if (sp) {
+        // 32x19 at chase distance, like the original; scaled with distance.
+        const k = fx.fire.r / 14;
+        const w = sp.image.width * k;
+        const h = sp.image.height * k;
+        c.drawImage(sp.image, Math.round(fx.fire.x - w / 2), Math.round(fx.fire.y - h / 2), Math.round(w), Math.round(h));
+      } else drawFireball(c, fx.fire.x, fx.fire.y, fx.fire.r, fx.frame);
+    }
     const original = s.view === 'cockpit' && this.original !== null;
     if (original) this.originalCockpit(s, this.original!);
     else if (s.view === 'cockpit') this.cockpit(s);

@@ -297,6 +297,9 @@ const showroom = new Showroom({
     return model ? createCarMeshFromModel(model, s, paint) : createCarMesh(s, PAINT[i % PAINT.length]);
   },
 });
+void loadPictures('SDGAME2.PVS').then((p) => {
+  dash.explosion = ['ex01', 'ex02', 'ex03'].map((n) => p?.get(n)).filter((s) => s !== undefined);
+});
 void loadPictures('SDCSEL.PVS').then((p) => showroom.setPictures(p?.get('stop') ?? null, p?.get('grap') ?? null));
 
 function showroomDone(): void {

@@ -57,7 +57,7 @@ export class Debris {
     };
     const mat = new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide });
     for (let i = 0; i < 14; i++) {
-      const size = 0.4 + rand() * 0.9;
+      const size = 0.3 + rand() * 0.5;
       const g = new THREE.BufferGeometry();
       g.setAttribute(
         'position',
@@ -67,10 +67,10 @@ export class Debris {
       // Render space: (east, up, -north).
       mesh.position.set(pos[0] + (rand() - 0.5) * 2, pos[2] + 0.5 + rand(), -(pos[1] + (rand() - 0.5) * 2));
       const a = rand() * Math.PI * 2;
-      const out = 3 + rand() * 7;
+      const out = 1.5 + rand() * 3.5;
       this.pieces.push({
         mesh,
-        vel: new THREE.Vector3(vel[0] * 0.3 + Math.cos(a) * out, 5 + rand() * 9, -(vel[1] * 0.3 + Math.sin(a) * out)),
+        vel: new THREE.Vector3(vel[0] * 0.15 + Math.cos(a) * out, 2.5 + rand() * 4.5, -(vel[1] * 0.15 + Math.sin(a) * out)),
         spin: new THREE.Vector3(rand() * 12 - 6, rand() * 12 - 6, rand() * 12 - 6),
         floor: pos[2] - 0.5,
       });
