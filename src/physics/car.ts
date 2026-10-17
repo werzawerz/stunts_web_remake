@@ -102,8 +102,6 @@ export interface CarState {
   quat: Quat;
   /** Angular velocity, only used while airborne (captured at take-off). */
   angVel: Vec3;
-  /** Roll rate (rad/s, about the car's length) in the air after tipping over a side edge. */
-  roll: number;
   steer: number;
   /** -1 = reverse, 1..n forward gears. */
   gear: number;
@@ -139,7 +137,6 @@ export function createCar(_spec: CarSpec, pos: Vec3, heading: Heading, speed = 0
     vel: scale(f, speed),
     quat: quatFromBasis(cross(f, u), f, u),
     angVel: [0, 0, 0],
-    roll: 0,
     steer: 0,
     gear: 1,
     manual,
@@ -169,14 +166,6 @@ function torqueAt(spec: CarSpec, rpm: number, gear: number): number {
 }
 
 const RAY_UP = 0.3;
-
-/**
- * Going over the side of a bridge or an elevated road, the wheels on one side lose the road first
- * and the car tips over that side (rad/s): it lands on its side or roof and crashes, as in the
- * original. Only over real drops (> TIP_DROP m), not kerbs or pipe walls.
- */
-const TIP_RATE = 2.5;
-const TIP_DROP = 6;
 
 interface Probe {
   hit: Hit;
@@ -423,20 +412,9 @@ function groundStep(
     s.vel = vel;
     s.pos = pos;
     s.quat = quatFromBasis(right, fwd, n);
-    // No tumbling from road kinks: the car leaves the road with the attitude it had...
+    // No tumbling from road kinks: the car leaves the road with the attitude it had.
     s.angVel = [0, 0, 0];
-    s.roll = 0;
     s.grounded = false;
-    // ...unless it goes over a side edge: road under one side's wheels only, a drop under the other.
-    const wheelOnRoad = (side: number): boolean =>
-      world.raycast(add(add(pos, scale(right, side * spec.halfTrack)), scale(n, RAY_UP)), scale(n, -1), RAY_UP + spec.rideHeight + 0.8) !== null;
-    const dropUnder = (side: number): number => {
-      const hit = world.raycast(add(pos, scale(right, side * (spec.halfTrack + 0.5))), [0, 0, -1], 200);
-      return hit ? hit.t : 200;
-    };
-    const l = wheelOnRoad(-1);
-    const r = wheelOnRoad(1);
-    if (l !== r && dropUnder(l ? 1 : -1) > TIP_DROP) s.roll = l ? TIP_RATE : -TIP_RATE; // > 0 rolls the right side down
   };
   if (!there) return takeOff();
   const n2 = there.n;
@@ -504,8 +482,6 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
       const rate = Math.min(AIR_PITCH_RATE, sinA / h);
       s.angVel = sinA > 1e-6 ? scale(axis, rate / sinA) : [0, 0, 0];
     } else s.angVel = [0, 0, 0];
-    // Tipping over a side edge keeps rolling the car.
-    if (s.roll !== 0) s.angVel = add(s.angVel, scale(f, s.roll));
   }
   s.quat = quatIntegrate(s.quat, s.angVel, h);
 
@@ -538,7 +514,6 @@ function airStep(s: CarState, spec: CarSpec, world: CollisionWorld, h: number): 
   s.quat = quatFromBasis(cross(f, n), f, n);
   s.angVel = [0, 0, 0];
   s.grounded = true;
-  s.roll = 0;
 }
 
 /** Order-stable fingerprint of the state, for determinism tests and replay validation. */
