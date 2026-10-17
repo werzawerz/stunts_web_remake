@@ -90,7 +90,9 @@ export class Autopilot {
     const tx = look[0] - car.pos[0];
     const ty = look[1] - car.pos[1];
     const tl = Math.sqrt(tx * tx + ty * ty) || 1;
-    const side = (fx * ty - fy * tx) / tl; // >0: target is to the left
+    // >0: target is to the left. Damped by the turn already under way (a quarter second of yaw),
+    // so the driver lets go in time instead of overshooting the line.
+    const side = (fx * ty - fy * tx) / tl - car.angVel[2] * 0.18;
     let mask = 0;
     if (side > 0.03) mask |= INPUT.Left;
     else if (side < -0.03) mask |= INPUT.Right;

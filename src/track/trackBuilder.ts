@@ -868,7 +868,7 @@ function aroundPipeBlock(path: [number, number, number][]): [number, number, num
   for (let i = 0; i <= 24; i++) {
     const t = i / 24;
     const s = t * len - len / 2; // metres from the tile centre
-    const k = 1 - smooth(Math.min(1, Math.max(0, (Math.abs(s) - 9) / 15)));
+    const k = 1 - smooth(Math.min(1, Math.max(0, (Math.abs(s) - 14) / (len / 2 - 14))));
     out.push([
       a[0] + (b[0] - a[0]) * t + r[0] * 6.1 * k,
       a[1] + (b[1] - a[1]) * t + r[1] * 6.1 * k,
