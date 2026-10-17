@@ -27,14 +27,16 @@ with our own assets, deployed as a playable web page with online lap times.
       own leaderboard each). Every piece code they use is understood; pieces we haven't modelled
       yet are plain stand-ins (see step 4); routes follow forks, crossroads and jumps over gaps;
       hill corners, coasts and roads on hills/slopes are built
+- [x] Collisions: walls and objects from the original shapes; only the front of the car hitting
+      steeper than ~30° crashes (glancing hits scrape, as in the original); landings crash on the
+      angle, not the height; splashes
+- [x] Original track pieces drawn and driven from the original shapes (pipes, pipe obstacle,
+      highway, slalom, bridges, tunnels, banks, corkscrews, buildings...). Cars fly off crests,
+      loops need speed. A test driver (`src/race/autopilot.ts`, `LAPS=1 npx vitest run
+      src/track/originalLaps.test.ts`) laps all six original tracks without crash or penalty
 
 ## Next (in order)
 2a. **Import any `.TRK` from disk** (file picker; leaderboard keyed by track content).
-3. **Collisions** — solid ramp/elevated side walls, hill sides, gantry, buildings and scenery
-   (crash on hard hits, like the original).
-4. **More track pieces** (measured from the original shapes): banked roads/corners, corkscrews,
-   pipes and half-pipes, tunnels, bridges, chicanes, split corners, slalom, highway, crossroads,
-   buildings (gas station, barn, office, windmill, ship, diner), coasts and angled hill slopes.
 5. **Car selection screen** like the original's showroom (model on a turntable, specs, the 7 paint
    jobs each original model has); digital speed readouts in the cockpits that have them.
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
