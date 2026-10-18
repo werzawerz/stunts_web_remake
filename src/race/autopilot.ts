@@ -17,6 +17,12 @@ const CREST_REACH = 100;
 
 export class Autopilot {
   private idx = 0;
+  /** Speed (m/s) to take off at when a jump lies ahead (Infinity: flat out). */
+  jumpSpeed = Infinity;
+  /** Share of the tyres' grip used in bends (a careful driver stays well under it). */
+  cornerGrip = 0.68;
+  /** Drive this far (m) to the right of the centre line (a rival starting beside the player). */
+  offset = 0;
 
   constructor(
     private readonly line: [number, number, number][],
@@ -27,7 +33,39 @@ export class Autopilot {
     private readonly guided: boolean[] = [],
     /** Per line point: a jump's take-off point (the route continues across a gap). */
     private readonly lip: boolean[] = [],
+    /** Per line point: a speed (m/s) not to exceed there (computer opponents' limits). */
+    private readonly caps: number[] = [],
   ) {}
+
+  /** Where the driver is along the line (a replay stores it with the car). */
+  get index(): number {
+    return this.idx;
+  }
+
+  set index(i: number) {
+    this.idx = i;
+  }
+
+  /** The lowest speed the caps ahead allow now, braking in time for each. */
+  private capLimit(dist: number): number {
+    if (this.caps.length === 0) return Infinity;
+    const n = this.line.length;
+    let i = this.idx;
+    let s = 0;
+    let limit = Infinity;
+    for (let k = 0; k < n && s <= dist; k++) {
+      const cap = this.caps[i] ?? Infinity;
+      if (cap < Infinity) {
+        const reach = Math.sqrt(cap * cap + 2 * this.spec.brakeDecel * 0.8 * s);
+        if (reach < limit) limit = reach;
+      }
+      const a = this.line[i]!;
+      const b = this.line[(i + 1) % n]!;
+      s += Math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2);
+      i = (i + 1) % n;
+    }
+    return limit;
+  }
 
   /** Index of the line point closest to the car, searching forward from the last one. */
   private advance(pos: [number, number, number]): void {
@@ -105,9 +143,21 @@ export class Autopilot {
     const fy = fwd[1] / fl;
 
     // Steering: aim at a point ahead; digital left/right like a keyboard player.
-    const look = this.ahead(10 + v * 0.45);
-    const tx = look[0] - car.pos[0];
-    const ty = look[1] - car.pos[1];
+    const lookDist = 10 + v * 0.45;
+    const look = this.ahead(lookDist);
+    let ox = 0;
+    let oy = 0;
+    if (this.offset !== 0) {
+      // Shift the aim point to the right of the line's direction there.
+      const before = this.ahead(Math.max(0, lookDist - 4));
+      const dx = look[0] - before[0];
+      const dy = look[1] - before[1];
+      const dl = Math.sqrt(dx * dx + dy * dy) || 1;
+      ox = (dy / dl) * this.offset;
+      oy = (-dx / dl) * this.offset;
+    }
+    const tx = look[0] + ox - car.pos[0];
+    const ty = look[1] + oy - car.pos[1];
     const tl = Math.sqrt(tx * tx + ty * ty) || 1;
     // >0: target is to the left. Damped by the turn already under way (a quarter second of yaw),
     // so the driver lets go in time instead of overshooting the line.
@@ -144,7 +194,7 @@ export class Autopilot {
         // A jump: bends beyond it are for after landing. With nothing to slow for before it, take
         // off flat out (gaps between bridge ramps need more than the usual cruising speed).
         if (this.lipWithin(d)) {
-          if (limit >= this.cruise) limit = Infinity;
+          if (limit >= this.cruise) limit = this.jumpSpeed;
           break;
         }
         if (this.ahead(d + 2 * step)[2] < cur[2] - 6 || cur[2] > 10) crest = d - step;
@@ -159,7 +209,7 @@ export class Autopilot {
         const turn = Math.abs(ax * by - ay * bx) / (la * lb); // sin of the heading change
         if (turn > 0.01) {
           const radius = step / turn;
-          const vCorner = Math.sqrt(0.68 * grip * G * radius);
+          const vCorner = Math.sqrt(this.cornerGrip * grip * G * radius);
           // Allow for braking distance to reach that speed by the bend.
           const reach = Math.sqrt(vCorner * vCorner + 2 * this.spec.brakeDecel * 0.8 * (d - step));
           if (reach < limit) limit = reach;
@@ -173,6 +223,7 @@ export class Autopilot {
       prev = cur;
       cur = next;
     }
+    limit = Math.min(limit, this.capLimit(160));
     if (v < limit - 1) mask |= INPUT.Throttle;
     else if (v > limit + 2) mask |= INPUT.Brake;
     return mask;

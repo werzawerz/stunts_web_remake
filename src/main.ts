@@ -39,6 +39,11 @@ import { CarSound } from './audio/sound';
 import { listTracks, saveTrack } from './track/trackStore';
 import { checkTrackPath } from './track/check';
 import { TrackEditor, type EditorAction } from './ui/trackEditor';
+import { OpponentSelect, type OpponentAction } from './ui/opponentSelect';
+import { OpponentResult, type RaceOutcome } from './ui/opponentResult';
+import { loadOpponent, OPPONENT_COUNT, type OpponentProfile } from './original/opponents';
+import type { Sprite } from './original/cockpit';
+import { collideCars, cloneRival, Rival, type RivalState } from './race/opponent';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
 const frame = document.createElement('div');
@@ -472,6 +477,15 @@ function editorAction(a: EditorAction): void {
 }
 
 function showroomDone(): void {
+  if (showroomForOpponent) {
+    showroomForOpponent = false;
+    opponentCar = showroom.index;
+    opponentPaint = showroom.paint;
+    showroom.portrait = null;
+    showroom.close();
+    saveOpponent();
+    return;
+  }
   manualGearbox = showroom.manual;
   carPaint = showroom.paint;
   showroom.close();
@@ -481,6 +495,7 @@ function showroomDone(): void {
 function menuAction(a: MenuAction): void {
   if (a.type === 'showroom') showroom.open(carIndex, carPaint, manualGearbox);
   else if (a.type === 'trackselect') trackSelect.open();
+  else if (a.type === 'opponent') opponentSelect.open(opponentId);
   else if (a.type === 'drive') {
     menu.close();
     resetCar();
@@ -527,9 +542,18 @@ dash.canvas.addEventListener('click', (e) => {
     replayAction(replayView.click(x, y, replayItems));
     return;
   }
+  if (opponentResult.visible) {
+    opponentResult.close();
+    return;
+  }
   if (showroom.visible) {
     sound.start();
     if (showroom.click(x, y).type === 'done') showroomDone();
+    return;
+  }
+  if (opponentSelect.visible) {
+    sound.start();
+    opponentAction(opponentSelect.click(x, y));
     return;
   }
   if (trackSelect.visible) {
@@ -555,6 +579,8 @@ dash.canvas.addEventListener('click', (e) => {
 interface RunState {
   car: CarState;
   lap: LapState;
+  /** The computer opponent, when racing one. */
+  rival?: RivalState;
 }
 /** Input bitmask of every tick since the car was (re)started, for the replay. */
 let replayLog: number[] = [];
@@ -562,14 +588,27 @@ let replay: Replay<RunState> | null = null;
 let rframe: Frame<RunState> | null = null;
 let replayFrom: 'evaluation' | 'race' | 'loaded' = 'race';
 /** What the replay is of (for Save REPLAY). */
-let replayMeta = { trackId: '', carId: '', paint: 0, manual: false };
+let replayMeta: { trackId: string; carId: string; paint: number; manual: boolean; opponent?: { id: number; car: string; paint: number } } = {
+  trackId: '',
+  carId: '',
+  paint: 0,
+  manual: false,
+};
 let replayAcc = 0;
 const replayView = new ReplayView();
 void loadPictures('SDGAME.PVS').then((p) => (replayView.pictures = p));
 replayView.savedNames = () => listReplays().map((r) => r.name);
 
 function startReplay(from: 'evaluation' | 'race' | 'loaded'): void {
-  replayMeta = { trackId, carId: spec.id, paint: carPaint, manual: manualGearbox };
+  finishLearning();
+  const rv = rival;
+  replayMeta = {
+    trackId,
+    carId: spec.id,
+    paint: carPaint,
+    manual: manualGearbox,
+    opponent: rv ? { id: rv.profile.id, car: rv.spec.id, paint: opponentPaint } : undefined,
+  };
   const s0 = spec;
   const pose = startPose;
   const man = manualGearbox;
@@ -577,10 +616,15 @@ function startReplay(from: 'evaluation' | 'race' | 'loaded'): void {
   const r = route;
   replay = new Replay<RunState>(
     replayLog.slice(),
-    () => ({ car: startOnLine(s0, pose.pos, pose.heading, man, w), lap: createLap() }),
+    () => ({
+      car: startOnLine(s0, pose.pos, pose.heading, man, w),
+      lap: createLap(),
+      rival: rv ? rv.create(pose.pos, pose.heading, (p, h) => startOnLine(rv.spec, p, h, false, w)) : undefined,
+    }),
     (st, input) => {
       stepCar(st.car, s0, input, w);
       if (r) stepLap(st.lap, r, st.car.pos, st.car.vel, (input & INPUT.Throttle) !== 0 || speedOf(st.car) > 0.5, st.car.crashed);
+      if (rv && st.rival) stepRival(rv, st.rival, st.car, st.lap.phase !== 'ready', w);
     },
   );
   replayFrom = from;
@@ -602,6 +646,11 @@ async function loadSavedReplay(r: SavedReplay): Promise<void> {
   menu.close();
   carPaint = r.paint;
   manualGearbox = r.manual;
+  if (r.opponent) {
+    opponentId = r.opponent.id;
+    opponentCar = Math.max(0, CARS.findIndex((c) => c.id === r.opponent!.car));
+    opponentPaint = r.opponent.paint;
+  } else opponentId = 0;
   selectCar(ci);
   if (ti !== trackIndex) await selectTrack(ti, 1, true);
   replayLog = r.inputs.slice(0, MAX_REPLAY_TICKS);
@@ -650,6 +699,8 @@ function replayAction(a: ReplayAction): void {
       finish = null;
       car = st.car;
       lap = st.lap;
+      if (st.rival) rivalState = st.rival;
+      outcomeShown = false;
       prevPos = [...car.pos];
       prevQuat = [...car.quat];
       replayLog = replayLog.slice(0, tick);
@@ -792,6 +843,154 @@ function loadGhost(): void {
     .catch(() => undefined);
 }
 
+// ---- computer opponents (main menu → Opponent) -------------------------------------------------
+const opponentSaved = ((): { id: number; car: string; paint: number } | null => {
+  try {
+    return JSON.parse(localStorage.getItem('stunts.opponent') ?? 'null') as { id: number; car: string; paint: number } | null;
+  } catch {
+    return null;
+  }
+})();
+/** 0 = race against the clock, 1..6 the original's opponents. */
+let opponentId = opponentSaved?.id ?? 0;
+let opponentCar = Math.max(0, CARS.findIndex((c) => c.id === opponentSaved?.car));
+let opponentPaint = opponentSaved?.paint ?? 0;
+const opponentProfiles = new Map<number, OpponentProfile | null>();
+for (let i = 1; i <= OPPONENT_COUNT; i++) {
+  void loadOpponent(i).then((p) => {
+    opponentProfiles.set(i, p);
+    if (i === opponentId && !rival && lap.phase === 'ready') setupRival();
+  });
+}
+function saveOpponent(): void {
+  try {
+    localStorage.setItem('stunts.opponent', JSON.stringify({ id: opponentId, car: CARS[opponentCar]!.id, paint: opponentPaint }));
+  } catch {
+    // Not remembered; fine.
+  }
+}
+const opponentSelect = new OpponentSelect((id) => opponentProfiles.get(id) ?? null);
+let opponentPictures: Map<string, Sprite> | null = null;
+void loadPictures('SDOSEL.PVS').then((p) => {
+  opponentPictures = p;
+  opponentSelect.setPictures(p);
+});
+const opponentResult = new OpponentResult(loadPictures);
+/** The showroom is choosing the opponent's car. */
+let showroomForOpponent = false;
+/** This race's opponent, its state, its car on screen, and what's left of its pre-race learning. */
+let rival: Rival | null = null;
+let rivalState: RivalState | null = null;
+let rivalObj: THREE.Group | null = null;
+let rivalLearning: Generator<void, number> | null = null;
+/** Opponents with the speeds they learnt, per route and setup (learning takes a while). */
+const rivals = new Map<string, Rival>();
+let routeSerial = 0;
+/** The two cars wrecked each other this run. */
+let wrecked = false;
+let outcomeShown = false;
+
+function dropRivalObj(): void {
+  if (!rivalObj) return;
+  scene.remove(rivalObj);
+  rivalObj.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
+  });
+  rivalObj = null;
+}
+
+/** Put the chosen opponent on the start line beside the player (or none). */
+function setupRival(): void {
+  rivalState = null;
+  rivalLearning = null;
+  wrecked = false;
+  outcomeShown = false;
+  opponentResult.close();
+  const profile = opponentId > 0 ? (opponentProfiles.get(opponentId) ?? null) : null;
+  if (!profile || !route) {
+    rival = null;
+    dropRivalObj();
+    return;
+  }
+  const s = CARS[opponentCar] ?? CARS[0]!;
+  const key = `${routeSerial}|${opponentId}|${s.id}`;
+  let r = rivals.get(key);
+  const fresh = !r;
+  if (!r) {
+    r = new Rival(profile, s, route, currentTrack);
+    rivals.set(key, r);
+  }
+  rival = r;
+  const w = world;
+  rivalState = r.create(startPose.pos, startPose.heading, (p, h) => startOnLine(s, p, h, false, w));
+  if (fresh) rivalLearning = r.learning(cloneRival(rivalState), w);
+  const look = `${s.id}|${opponentPaint}|${originalModels[s.id] ? 1 : 0}`;
+  if (!rivalObj || rivalObj.userData.look !== look) {
+    dropRivalObj();
+    const model = originalModels[s.id];
+    rivalObj = model ? createCarMeshFromModel(model, s, opponentPaint) : createCarMesh(s, PAINT[(opponentCar + 3) % PAINT.length]);
+    rivalObj.userData.look = look;
+    scene.add(rivalObj);
+  }
+}
+
+/** The race is on: the opponent's learning has to be complete. */
+function finishLearning(): void {
+  if (!rivalLearning) return;
+  let r = rivalLearning.next();
+  while (!r.done) r = rivalLearning.next();
+  rivalLearning = null;
+}
+
+/** Learn a slice at a time while the player waits on the start line or in the menus. */
+function learnABit(budgetMs: number): void {
+  if (!rivalLearning) return;
+  const t0 = performance.now();
+  while (performance.now() - t0 < budgetMs) {
+    if (rivalLearning.next().done) {
+      rivalLearning = null;
+      return;
+    }
+  }
+}
+
+/** The opponent's tick, right after the player's (the same in replays); true when they collide. */
+function stepRival(r: Rival, st: RivalState, player: CarState, racing: boolean, w: CollisionWorld): boolean {
+  r.step(st, w, racing);
+  return collideCars(player, st.car);
+}
+
+/** After the race: let the opponent finish (the original's "calculating opponent time"), then their verdict. */
+function showOutcome(now: number): void {
+  outcomeShown = true;
+  if (!rival || !rivalState) return;
+  finishLearning();
+  for (let k = 0; k < 60 * 900 && rivalState.lap.phase !== 'finished' && !rivalState.car.crashed; k++) rival.step(rivalState, world, true);
+  const o: RaceOutcome = {
+    playerSec: finish ? finish.timeSec + finish.penaltySec : null,
+    opponentSec: rivalState.lap.phase === 'finished' ? lapTotal(rivalState.lap) : null,
+    collision: wrecked,
+    seed: lap.ticks,
+  };
+  opponentResult.open(rival.profile, o, now);
+}
+
+function opponentAction(a: OpponentAction): void {
+  if (a.type === 'done') {
+    opponentId = opponentSelect.index;
+    opponentSelect.close();
+    saveOpponent();
+    resetCar();
+  } else if (a.type === 'car') {
+    showroomForOpponent = true;
+    showroom.portrait = opponentPictures?.get(`opp${opponentSelect.index}`) ?? null;
+    showroom.open(opponentCar, opponentPaint, false);
+  }
+}
+
 function resetCar(): void {
   replayLog = [];
   ghost?.reset();
@@ -804,6 +1003,7 @@ function resetCar(): void {
   runStats = { top: 0, distance: 0, seconds: 0 };
   clearCrash();
   finish = null;
+  setupRival();
 }
 
 /** Over the line: roll out, "Please Wait...", then the evaluation screen with the name entry. */
@@ -882,6 +1082,7 @@ function loadScene(track: Track): void {
   route = start ? buildRoute(built.pieces, start.dir) : null;
   // Penalties follow the original's path, every way through the track (see race/lap.ts).
   if (route) route.graph = checkTrackPath(track).graph ?? null;
+  routeSerial++;
   if (start) {
     const f = ({ N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] } as const)[start.dir];
     // Start a little behind the line so the player drives through it.
@@ -933,6 +1134,11 @@ async function selectTrack(i: number, step = 1, quiet = false): Promise<void> {
 window.addEventListener('keydown', (e) => {
   // Browsers only allow sound after a user gesture: the first key press turns it on.
   sound.start();
+  if (opponentResult.visible) {
+    opponentResult.close();
+    e.preventDefault();
+    return;
+  }
   if (naming()) {
     nameKey(e);
     e.preventDefault();
@@ -959,6 +1165,11 @@ window.addEventListener('keydown', (e) => {
   }
   if (showroom.visible) {
     if (showroom.key(e.code).type === 'done') showroomDone();
+    e.preventDefault();
+    return;
+  }
+  if (opponentSelect.visible) {
+    opponentAction(opponentSelect.key(e.code));
     e.preventDefault();
     return;
   }
@@ -1076,6 +1287,8 @@ const toThree = (v: Vec3): THREE.Vector3 => new THREE.Vector3(v[0], v[2], -v[1])
 renderer.setAnimationLoop((now) => {
   const frameDt = Math.min((now - last) / 1000, 0.1);
   last = now;
+  // The opponent learns its lap while the player is in the menus or waiting on the start line.
+  if (rivalLearning && lap.phase === 'ready') learnABit(menu.visible || trackSelect.visible || opponentSelect.visible || showroom.visible ? 12 : 6);
   if (replayView.visible && replay && rframe) {
     acc = 0;
     // Advance the replay: play at normal speed, fast play and fast forward faster, rewind back.
@@ -1093,6 +1306,11 @@ renderer.setAnimationLoop((now) => {
     }
     const rc = rframe.state.car;
     if (ghostObj) ghostObj.visible = false;
+    if (rivalObj) {
+      const rs = rframe.state.rival;
+      if (rs) setObjectPose(rivalObj, rs.car.pos, rs.car.quat);
+      rivalObj.visible = rs !== undefined;
+    }
     setObjectPose(carObject, rc.pos, rc.quat);
     carObject.visible = replayView.camera !== 'inside' && !rc.crashed;
     if (crash) crash.debris.group.visible = false;
@@ -1161,6 +1379,12 @@ renderer.setAnimationLoop((now) => {
     dash.drawScreen((c) => showroom.drawPanel(c, now));
     return;
   }
+  if (opponentSelect.visible) {
+    acc = 0;
+    sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
+    dash.drawScreen((c) => opponentSelect.draw(c, now));
+    return;
+  }
   if (trackSelect.visible) {
     acc = 0;
     sound.update({ rpm: car.rpm, skidding: false, crashed: false, silent: true });
@@ -1210,6 +1434,17 @@ renderer.setAnimationLoop((now) => {
       ghost?.follow(inputLog.length);
       if (wasRunning && lap.phase === 'finished') onFinish();
     }
+    if (rival && rivalState) {
+      const racing = lap.phase !== 'ready';
+      if (racing) finishLearning();
+      const wasCrashed2 = car.crashed;
+      const speedBefore2 = speedOf(car);
+      const velBefore2: Vec3 = [...car.vel];
+      if (stepRival(rival, rivalState, car, racing, world)) {
+        wrecked = true;
+        if (!wasCrashed2 && car.crashed && !finish) onCrash(speedBefore2, velBefore2);
+      }
+    }
     acc -= DT;
   }
 
@@ -1234,6 +1469,10 @@ renderer.setAnimationLoop((now) => {
   if (ghost && ghostObj) {
     setObjectPose(ghostObj, ghost.car.pos, ghost.car.quat);
     ghostObj.visible = ghostEnabled && !evaluationShown();
+  }
+  if (rivalObj) {
+    if (rivalState) setObjectPose(rivalObj, rivalState.car.pos, rivalState.car.quat);
+    rivalObj.visible = rivalState !== null && !evaluationShown();
   }
   // An exploded car is gone: only its debris and the fireball remain.
   carObject.visible = view !== 'cockpit' && !crash;
@@ -1289,6 +1528,12 @@ renderer.setAnimationLoop((now) => {
   } else if (finish) {
     const t = finishSeconds();
     crashFx = { cracks: null, fire: null, frame: 0, pleaseWait: t >= FINISH_WAIT_AT && t < FINISH_EVAL_AT };
+  }
+  // Racing an opponent: their verdict comes before the evaluation.
+  if (evaluationShown() && rival && !outcomeShown) showOutcome(now);
+  if (opponentResult.visible) {
+    dash.drawScreen((c) => opponentResult.draw(c, now));
+    return;
   }
   dash.draw({
     view,

@@ -10,6 +10,8 @@ export interface SavedReplay {
   carId: string;
   paint: number;
   manual: boolean;
+  /** The computer opponent raced (none for a race against the clock). */
+  opponent?: { id: number; car: string; paint: number };
   /** One input bitmask per tick. */
   inputs: number[];
   savedAt: string;

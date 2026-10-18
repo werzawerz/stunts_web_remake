@@ -12,6 +12,7 @@ export type MenuAction =
   | { type: 'drive' }
   | { type: 'showroom' }
   | { type: 'trackselect' }
+  | { type: 'opponent' }
   | { type: 'car'; index: number }
   | { type: 'track'; index: number }
   | { type: 'sound'; on: boolean }
@@ -109,11 +110,8 @@ export class MainMenu {
     if (label === "Let's Drive") return { type: 'drive' };
     if (label === 'Car') return { type: 'showroom' };
     if (label === 'Track') return { type: 'trackselect' };
-    if (label === 'Option') {
-      this.optionsScreen(0);
-    } else {
-      this.screen = { kind: 'message', title: 'Opponent', lines: ['No opponents yet:', 'you race against the clock.'] };
-    }
+    if (label === 'Opponent') return { type: 'opponent' };
+    this.optionsScreen(0);
     return { type: 'none' };
   }
 

@@ -24,11 +24,15 @@ export interface Route {
   guided: boolean[];
   /** Per line3d point: a take-off point, where the route jumps a gap to the next piece. */
   lip: boolean[];
+  /** Per line3d point: the piece (index into `pieces`) it belongs to. */
+  linePiece: number[];
   /** The original's path with every way through the track, for penalties (see lap.ts). */
   graph?: PathGraph | null;
 }
 
 const cellKey = (x: number, z: number): number => x * 1000 + z;
+/** Longest distance (m) between two points of the line within a piece. */
+const LINE_STEP = 2;
 const DIR: Record<Dir, [number, number]> = { N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] };
 
 const near = (a: [number, number], b: [number, number]): boolean => Math.hypot(a[0] - b[0], a[1] - b[1]) < 2;
@@ -50,14 +54,20 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     return [(to[0] - from[0]) / l, (to[1] - from[1]) / l];
   };
   // Depth-first search with backtracking: at forks (split corners) and crossroads several pieces
-  // continue from the same point; we want the way that leads back to start/finish, and failing
-  // that, the longest way found.
+  // continue from the same point; we want the shortest way back to start/finish (the way a driver
+  // races), and failing that, the longest way found.
   const ordered: TrackPiece[] = [start];
   const dirs: [number, number][] = [unit(startEntry, start.ends[startExit]!)];
   const used = new Set<TrackPiece>([start]);
   let best: { pieces: TrackPiece[]; dirs: [number, number][] } = { pieces: [...ordered], dirs: [...dirs] };
   let closed = false;
+  let shortest: { pieces: TrackPiece[]; dirs: [number, number][]; len: number } | null = null;
   let budget = 20000; // bounds the search on pathological tracks
+  const pathLength = (q: TrackPiece): number => {
+    let l = 0;
+    for (let k = 1; k < q.path.length; k++) l += Math.hypot(q.path[k]![0] - q.path[k - 1]![0], q.path[k]![1] - q.path[k - 1]![1]);
+    return l;
+  };
 
   /**
    * Pieces that continue the road at `point`. After a ramp the road may continue further along
@@ -94,7 +104,12 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
 
   const walk = (point: [number, number]): boolean => {
     if (--budget < 0) return false;
-    if (ordered.length > 2 && near(point, startEntry)) return true;
+    if (ordered.length > 2 && near(point, startEntry)) {
+      // Back at start/finish: keep the shortest lap, and look for a shorter one.
+      const len = ordered.reduce((sum, q) => sum + pathLength(q), 0);
+      if (!shortest || len < shortest.len) shortest = { pieces: [...ordered], dirs: [...dirs], len };
+      return false;
+    }
     let progressed = false;
     for (const { q, end } of continuations(point)) {
       if (used.has(q)) continue;
@@ -117,8 +132,16 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     if (!progressed && ordered.length > best.pieces.length) best = { pieces: [...ordered], dirs: [...dirs] };
     return false;
   };
-  closed = walk(start.ends[startExit]!);
-  if (!closed) {
+  walk(start.ends[startExit]!);
+  // (Set inside walk(); the compiler can't see that.)
+  const lap = shortest as { pieces: TrackPiece[]; dirs: [number, number][] } | null;
+  closed = lap !== null;
+  if (lap) {
+    ordered.length = 0;
+    ordered.push(...lap.pieces);
+    dirs.length = 0;
+    dirs.push(...lap.dirs);
+  } else {
     ordered.length = 0;
     ordered.push(...best.pieces);
     dirs.length = 0;
@@ -139,20 +162,34 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
   const line3d: [number, number, number][] = [];
   const guided: boolean[] = [];
   const lip: boolean[] = [];
+  const linePiece: number[] = [];
   ordered.forEach((p, i) => {
     const d = dirs[i]!;
     const forward = (p.ends[1][0] - p.ends[0][0]) * d[0] + (p.ends[1][1] - p.ends[0][1]) * d[1] >= 0;
     const pts = forward ? p.path : [...p.path].reverse();
     const prev = line3d[line3d.length - 1];
     if (prev && Math.hypot(pts[0]![0] - prev[0], pts[0]![1] - prev[1]) > 2) lip[lip.length - 1] = true;
-    for (const q of pts) {
+    const push = (q: [number, number, number]): void => {
+      line3d.push(q);
+      guided.push(p.kind === 'loop');
+      lip.push(false);
+      linePiece.push(i);
+    };
+    pts.forEach((q, k) => {
       const last = line3d[line3d.length - 1];
-      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.5) {
-        line3d.push(q);
-        guided.push(p.kind === 'loop');
-        lip.push(false);
+      if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) <= 0.5) return;
+      // Within a piece, no more than LINE_STEP between points (a straight's path is just its two
+      // ends): drivers find their place on the line by its nearest point.
+      if (last && k > 0) {
+        const d = Math.hypot(q[0] - last[0], q[1] - last[1]);
+        const parts = Math.ceil(d / LINE_STEP);
+        for (let m = 1; m < parts; m++) {
+          const t = m / parts;
+          push([last[0] + (q[0] - last[0]) * t, last[1] + (q[1] - last[1]) * t, last[2] + (q[2] - last[2]) * t]);
+        }
       }
-    }
+      push(q);
+    });
   });
   return {
     pieces: ordered,
@@ -162,6 +199,7 @@ export function buildRoute(pieces: TrackPiece[], startDir: Dir): Route | null {
     line3d,
     guided,
     lip,
+    linePiece,
     line: { centre: [(cx + 0.5) * TILE, (cz + 0.5) * TILE], dir: sd },
   };
 }

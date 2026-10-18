@@ -47,6 +47,8 @@ export class Showroom {
   /** Original stage picture and graph grid, when the player's files have them. */
   private stage: Sprite | null = null;
   private grid: Sprite | null = null;
+  /** Choosing an opponent's car: their photo, in the top right corner as in the original. */
+  portrait: Sprite | null = null;
 
   constructor(private readonly deps: ShowroomDeps) {
     this.bgCanvas.width = 320;
@@ -258,6 +260,7 @@ export class Showroom {
       const label = BUTTONS[i] === 'Auto' ? (this.manual ? 'Manual' : 'Auto') : BUTTONS[i]!;
       outlined(c, label, x + w / 2, y + h / 2, 'center', 9);
     });
+    if (this.portrait) c.drawImage(this.portrait.image, 320 - this.portrait.image.width, 1);
   }
 }
 

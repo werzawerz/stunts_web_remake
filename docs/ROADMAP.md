@@ -55,11 +55,15 @@ with our own assets, deployed as a playable web page with online lap times.
       edges, one start/finish, joins, wrong way, jumps, a complete lap); tracks saved in
       the browser as TRK bytes and listed with the others (no online times for them)
 
+- [x] Computer opponents like the original's (main menu → Opponent): the six drivers from the
+      player's files, their bios and photos, Last/Next/Clock/Car/Done, their car from the showroom;
+      they race beside you with their own speed table and weak spots (learnt per track before the
+      race), cars collide, and afterwards their win/lose animation and lines; in replays too
+
 ## Next (in order)
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
 ## Later
-10. **AI opponents** following the track path (next up).
 11. **Sharing editor tracks** online (Supabase), with their own fastest times.
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
 
