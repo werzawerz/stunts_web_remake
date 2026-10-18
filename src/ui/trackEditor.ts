@@ -174,7 +174,7 @@ export class TrackEditor {
     const page = pageKey(e);
     if (page !== null) this.setPage(page === 'next' ? this.page + 1 : page === 'prev' ? this.page - 1 : page);
     else if (code === 'Space' || code === 'Numpad0') this.focus = this.focus === 'map' ? 'grid' : 'map';
-    else if (code === 'KeyC') this.showMessage(checkTrack(this.track));
+    else if (code === 'KeyC') this.check();
     else if (code === 'Escape') this.leave();
     else if (this.focus === 'map') {
       const move: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
@@ -483,15 +483,28 @@ export class TrackEditor {
         this.askName(null);
         break;
       case 'done':
-        this.leave();
+        // A track that fails the check can't be driven: say why, and stay.
+        if (this.check(false)) this.leave();
         break;
     }
   }
 
+  /** The original's track check: the message (always, or only when it fails); the cursor goes to the trouble. */
+  private check(always = true): boolean {
+    const r = checkTrack(this.track);
+    if (r.at) {
+      this.moveCursor(...r.at);
+      this.focus = 'map';
+    }
+    if (always || r.error) this.showMessage(r.message);
+    return r.error === null;
+  }
+
+  /** Leave the editor (Done, Escape): with the last saved version if it can be driven. */
   private leave(): void {
     this.changed('Exit Editor', () => {
       const s = this.saved;
-      this.action = s ? { type: 'done', track: cloneTrack(s.track), name: s.name } : { type: 'cancel' };
+      this.action = s && !checkTrack(s.track).error ? { type: 'done', track: cloneTrack(s.track), name: s.name } : { type: 'cancel' };
     });
   }
 

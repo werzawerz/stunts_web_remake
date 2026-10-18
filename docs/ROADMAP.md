@@ -51,7 +51,8 @@ with our own assets, deployed as a playable web page with online lap times.
 - [x] Track editor like the original (Track select → New/Edit Tracks), laid out from its screen and
       drawn with its own icons and font from the player's files: the 12×11 track window, the ten
       palette pages with every orientation, page bar, Horizon/Load/New (five terrain backgrounds)/
-      Save/Done, its keyboard and mouse controls, placement rules and track check; tracks saved in
+      Save/Done, its keyboard and mouse controls, placement rules and its full track check (terrain
+      edges, one start/finish, joins, wrong way, jumps, a complete lap); tracks saved in
       the browser as TRK bytes and listed with the others (no online times for them)
 
 ## Next (in order)

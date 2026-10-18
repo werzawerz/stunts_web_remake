@@ -37,6 +37,7 @@ import { Ghost, startOnLine } from './race/ghost';
 import { listReplays, saveReplay, type SavedReplay } from './race/replayStore';
 import { CarSound } from './audio/sound';
 import { listTracks, saveTrack } from './track/trackStore';
+import { checkTrackPath } from './track/check';
 import { TrackEditor, type EditorAction } from './ui/trackEditor';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
@@ -162,6 +163,8 @@ let startPose: { pos: Vec3; heading: 'N' | 'E' | 'S' | 'W' } = { pos: [0, 0, 1],
 // ---- race: route, lap clock, penalties, results ---------------------------------------------
 // Tracks: our demo circuit plus the six originals, read from the player's own Stunts files.
 interface TrackEntry {
+  /** False for a saved editor track that fails the original's track check. */
+  drivable?: boolean;
   id: string;
   name: string;
   load: () => Promise<Track | null>;
@@ -177,12 +180,19 @@ const TRACKS: TrackEntry[] = [
     },
   })),
 ];
+/** Names for the track lists; saved tracks that can't be driven yet are marked. */
+const trackNames = (): string[] => TRACKS.map((t) => (t.drivable === false ? `${t.name} (unfinished)` : t.name));
 /** Put the tracks made in the editor at the end of the list (after a save). */
 function refreshCustomTracks(): void {
   for (let i = TRACKS.length - 1; i >= 0; i--) if (TRACKS[i]!.id.startsWith('custom-')) TRACKS.splice(i, 1);
   for (const t of listTracks()) {
     const name = t.name;
-    TRACKS.push({ id: `custom-${name}`, name, load: async () => listTracks().find((x) => x.name === name)?.track ?? null });
+    TRACKS.push({
+      id: `custom-${name}`,
+      name,
+      drivable: checkTrackPath(t.track).error === null,
+      load: async () => listTracks().find((x) => x.name === name)?.track ?? null,
+    });
   }
   trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === trackId));
 }
@@ -323,7 +333,7 @@ function evalActivate(i: number): void {
 const menu = new MainMenu({
   cars: () => CARS.map((c) => originalModels[c.id]?.name ?? c.name),
   carIndex: () => carIndex,
-  tracks: () => TRACKS.map((t) => t.name),
+  tracks: trackNames,
   trackIndex: () => trackIndex,
   soundOn: () => !sound.muted,
   ghostOn: () => ghostEnabled,
@@ -400,7 +410,7 @@ const trackSelect = new TrackSelect({
     return e.id.startsWith('orig-') ? e.id.slice(5) : e.name;
   },
   best: bestTime,
-  tracks: () => TRACKS.map((t) => t.name),
+  tracks: trackNames,
   trackIndex: () => trackIndex,
 });
 
@@ -435,7 +445,7 @@ function trackSelectAction(a: ReturnType<TrackSelect['key']>): void {
 
 // ---- track editor (the original's, from Track select → New/Edit Tracks) ------------------------
 const trackEditor = new TrackEditor({
-  trackNames: () => TRACKS.map((t) => t.name),
+  trackNames,
   loadTrack: async (i) => {
     const e = TRACKS[i];
     const track = e ? await e.load() : null;
@@ -903,6 +913,11 @@ async function selectTrack(i: number, step = 1, quiet = false): Promise<void> {
   for (let k = 0; k < TRACKS.length; k++) {
     const idx = (((i + k * step) % TRACKS.length) + TRACKS.length) % TRACKS.length;
     const entry = TRACKS[idx]!;
+    // Unfinished editor tracks (failing the track check) can't be raced.
+    if (entry.drivable === false) {
+      if (quiet && k === 0) return;
+      continue;
+    }
     const track = await entry.load();
     if (!track) continue;
     trackIndex = idx;

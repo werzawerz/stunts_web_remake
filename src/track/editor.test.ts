@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   anchorOf,
-  checkTrack,
   elementName,
   FILLER_NE,
   FILLER_SE,
@@ -86,26 +85,6 @@ describe('track editor', () => {
     expect(placementError(t, 5, 5, 0x27)).toBeNull(); // elevated ramp
     expect(placementError(t, 4, 5, 0x0a)).toBe(MESSAGES.angled); // a 2x2 reaching onto the corner
     expect(placementError(t, 5, 5, 0)).toBeNull(); // erasing is always fine
-  });
-
-  it('checks the track like the original', () => {
-    const t = createEmptyTrack();
-    expect(checkTrack(t)).toBe(MESSAGES.noStart);
-    // A small ring: corners at the four corners, start line on the west side.
-    placeAt(t, 3, 5, 0x06); // S-E corner (top left)
-    placeAt(t, 4, 5, 0x05);
-    placeAt(t, 5, 5, 0x07); // W-S corner (top right)
-    placeAt(t, 5, 4, 0x04);
-    placeAt(t, 5, 3, 0x09); // W-N corner (bottom right)
-    placeAt(t, 4, 3, 0x05);
-    placeAt(t, 3, 3, 0x08); // N-E corner (bottom left)
-    expect(checkTrack(t)).toBe(MESSAGES.noStart);
-    placeAt(t, 3, 4, 0x01);
-    expect(checkTrack(t)).toBe(MESSAGES.ok);
-    placeAt(t, 4, 5, 0);
-    expect(checkTrack(t)).toBe(MESSAGES.noPath);
-    placeAt(t, 10, 10, 0x01);
-    expect(checkTrack(t)).toBe(MESSAGES.manyStarts);
   });
 
   it('reads terrain backgrounds north row first', () => {

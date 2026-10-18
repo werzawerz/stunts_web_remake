@@ -1,15 +1,13 @@
 import { ELEMENT_SHAPES } from '../original/elementTable.generated';
-import { buildRoute } from '../race/route';
+import { checkTrackPath, onSlope, TRACK_ERROR_TEXT, type TrackCheck } from './check';
 import { ELEMENT_NAMES, PALETTE_PAGES } from './editorTables.generated';
-import { findStart } from './start';
-import { buildTrack } from './trackBuilder';
 import { GRID, type Track } from './trkFormat';
 
 /*
  * Editing a track like the original's track editor (pure data, no drawing): its palette pages and
  * piece names (editorTables.generated.ts, from the original's TEDIT.PRE), placing and removing
- * pieces with the fillers bigger pieces need, its placement rules and its track check (skill
- * `stunts-track-format` for the codes, the original's messages for the rules).
+ * pieces with the fillers bigger pieces need, and its placement rules (skill `stunts-track-format`
+ * for the codes, the original's messages for the rules). The track check is in check.ts.
  */
 
 export { PALETTE_PAGES };
@@ -84,29 +82,21 @@ export function startCount(track: Track): number {
   return n;
 }
 
-// The original's messages ("]" breaks a line in its strings).
+// The original's placement messages ("]" breaks a line in its strings).
 export const MESSAGES = {
   water: ['Limited objects allowed on water.', 'Only Overpass pieces with stilts,', 'overpass span & boat allowed.'],
   angled: ['No Objects are Allowed on', 'the angled terrain edge blocks.'],
   slope: ['Only straight roads, or', 'elevated ramp is allowed', 'on straight edges of terrain.'],
-  noStart: ['No start/finish', 'line on track.', 'Must have one.'],
-  manyStarts: ['Too many start/finish', 'lines on track.', 'Use one only.'],
-  noPath: ['Must be at least one', 'complete path around the track.'],
-  ok: ['Track ok.'],
 };
 
 /** Pieces allowed on water: elevated road on stilts, elevated span and the boat. */
 const ON_WATER = new Set([0x22, 0x23, 0x67, 0x68, 0xab, 0xac, 0xad, 0xae]);
-/** Straight roads (north-south, east-west) and elevated ramps (by the way they climb). */
-const ROAD_AXIS = new Map<number, 'NS' | 'EW'>([
-  [0x04, 'NS'], [0x05, 'EW'], [0x0e, 'NS'], [0x0f, 'EW'], [0x18, 'NS'], [0x19, 'EW'],
-  [0x26, 'NS'], [0x27, 'NS'], [0x24, 'EW'], [0x25, 'EW'],
-]);
 
 /**
  * The original's placement rules, checked on every tile the piece would cover: nothing but
- * overpasses and the boat on water, nothing on the angled hill and coast corners, and only
- * roads or elevated ramps running straight up or down a slope. Returns the message, or null.
+ * overpasses and the boat on water, nothing on the angled hill and coast corners, and on slopes
+ * only straight roads going up or down and ramps climbing against the slope (to hill height), the
+ * pieces the original drives as slope roads. Returns the message, or null.
  */
 export function placementError(track: Track, x: number, z: number, code: number): string[] | null {
   if (code === 0) return null;
@@ -116,29 +106,16 @@ export function placementError(track: Track, x: number, z: number, code: number)
       const t = track.terrain[x + i]?.[z - j] ?? 0;
       if (t === 0x01 && !ON_WATER.has(code)) return MESSAGES.water;
       if ((t >= 0x02 && t <= 0x05) || (t >= 0x0b && t <= 0x12)) return MESSAGES.angled;
-      if (t >= 0x07 && t <= 0x0a) {
-        const axis = t === 0x07 || t === 0x09 ? 'NS' : 'EW';
-        if (ROAD_AXIS.get(code) !== axis) return MESSAGES.slope;
-      }
+      if (t >= 0x07 && t <= 0x0a && onSlope(t, code) === 0) return MESSAGES.slope;
     }
   }
   return null;
 }
 
-/** The original's track check ("C" in the editor, and before driving). */
-export function checkTrack(track: Track): string[] {
-  const n = startCount(track);
-  if (n === 0) return MESSAGES.noStart;
-  if (n > 1) return MESSAGES.manyStarts;
-  const start = findStart(track)!;
-  const built = buildTrack(track, null);
-  built.group.traverse((o) => {
-    const m = o as { geometry?: { dispose(): void }; material?: { dispose(): void } };
-    m.geometry?.dispose();
-    m.material?.dispose();
-  });
-  const route = buildRoute(built.pieces, start.dir);
-  return route?.closed ? MESSAGES.ok : MESSAGES.noPath;
+/** The original's track check: its result and message (see check.ts). */
+export function checkTrack(track: Track): TrackCheck & { message: string[] } {
+  const r = checkTrackPath(track);
+  return { ...r, message: TRACK_ERROR_TEXT[r.error ?? 'ok'] };
 }
 
 /** A terrain background for a new track from the original's presets (rows north first). */
