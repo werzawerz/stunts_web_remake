@@ -12,7 +12,7 @@ import { buildSampleTrack } from './track/sampleTrack';
 import { fetchOriginal } from './original/files';
 import type { Shape } from './original/formats';
 import { loadTrackShapes } from './original/trackShapes';
-import { parseTrk, serializeTrk, type Track } from './track/trkFormat';
+import { parseTrk, type Track } from './track/trkFormat';
 import { findStart } from './track/start';
 import { buildTrack } from './track/trackBuilder';
 import { Horizon } from './track/trkFormat';
@@ -177,19 +177,12 @@ const TRACKS: TrackEntry[] = [
     },
   })),
 ];
-/** The last track left with Done in the track editor without saving it. */
-let editedTrack: { name: string; track: Track } | null = null;
-const EDITED_ID = 'custom-*';
-/** Put the tracks made in the editor at the end of the list (after a save or an edit). */
+/** Put the tracks made in the editor at the end of the list (after a save). */
 function refreshCustomTracks(): void {
   for (let i = TRACKS.length - 1; i >= 0; i--) if (TRACKS[i]!.id.startsWith('custom-')) TRACKS.splice(i, 1);
   for (const t of listTracks()) {
     const name = t.name;
     TRACKS.push({ id: `custom-${name}`, name, load: async () => listTracks().find((x) => x.name === name)?.track ?? null });
-  }
-  if (editedTrack) {
-    const e = editedTrack;
-    TRACKS.push({ id: EDITED_ID, name: e.name, load: async () => e.track });
   }
   trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === trackId));
 }
@@ -436,7 +429,7 @@ function trackSelectAction(a: ReturnType<TrackSelect['key']>): void {
   } else if (a.type === 'pick') void selectTrack(a.index, 1, true);
   else if (a.type === 'edit') {
     const e = TRACKS[trackIndex]!;
-    trackEditor.open(currentTrack, e.id.startsWith('custom-') && e.id !== EDITED_ID ? e.name : '');
+    trackEditor.open(currentTrack, e.id.startsWith('custom-') ? e.name : '');
   }
 }
 
@@ -448,7 +441,7 @@ const trackEditor = new TrackEditor({
     const track = e ? await e.load() : null;
     if (!e || !track) return null;
     // Only the player's own tracks keep their name: saving an original asks for a new one.
-    return { track, name: e.id.startsWith('custom-') && e.id !== EDITED_ID ? e.name : '' };
+    return { track, name: e.id.startsWith('custom-') ? e.name : '' };
   },
   save: (name, track) => {
     const ok = saveTrack(name, track);
@@ -460,14 +453,11 @@ const trackEditor = new TrackEditor({
 function editorAction(a: EditorAction): void {
   if (a.type === 'cancel') trackEditor.close();
   else if (a.type === 'done') {
+    // As in the original, a track is driven as it was saved.
     trackEditor.close();
-    // Drive it as saved when it is, else as the "edited" track at the end of the list.
-    const bytes = serializeTrk(a.track).join();
-    const saved = a.name !== '' && listTracks().some((t) => t.name === a.name && serializeTrk(t.track).join() === bytes);
-    editedTrack = saved ? null : { name: a.name ? `${a.name} (edited)` : 'New track', track: a.track };
     refreshCustomTracks();
-    const id = saved ? `custom-${a.name}` : EDITED_ID;
-    void selectTrack(Math.max(0, TRACKS.findIndex((t) => t.id === id)), 1, true);
+    const i = TRACKS.findIndex((t) => t.id === `custom-${a.name}`);
+    if (i >= 0) void selectTrack(i, 1, true);
   }
 }
 
@@ -503,12 +493,7 @@ function screenXY(e: MouseEvent): [number, number] {
   const r = dash.canvas.getBoundingClientRect();
   return [((e.clientX - r.left) / r.width) * SCREEN_W, ((e.clientY - r.top) / r.height) * SCREEN_H];
 }
-// The track editor also takes right clicks (erase), mouse moves (cursor) and the wheel (scroll).
-dash.canvas.addEventListener('contextmenu', (e) => {
-  if (!trackEditor.visible) return;
-  e.preventDefault();
-  editorAction(trackEditor.click(...screenXY(e), 2));
-});
+// The track editor also follows the mouse (it makes what it is over active) and the wheel.
 dash.canvas.addEventListener('mousemove', (e) => {
   if (trackEditor.visible) trackEditor.move(...screenXY(e));
 });

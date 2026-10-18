@@ -1,130 +1,31 @@
 import { ELEMENT_SHAPES } from '../original/elementTable.generated';
+import { buildRoute } from '../race/route';
+import { ELEMENT_NAMES, PALETTE_PAGES } from './editorTables.generated';
+import { findStart } from './start';
+import { buildTrack } from './trackBuilder';
 import { GRID, type Track } from './trkFormat';
 
 /*
- * Editing a track like the original's track editor: the catalogue of pieces (codes per rotation,
- * from the TRK format tables, skill `stunts-track-format`) and placing / removing them on the 30x30
- * grid with the fillers multi-tile pieces need. Pure data, no drawing.
+ * Editing a track like the original's track editor (pure data, no drawing): its palette pages and
+ * piece names (editorTables.generated.ts, from the original's TEDIT.PRE), placing and removing
+ * pieces with the fillers bigger pieces need, its placement rules and its track check (skill
+ * `stunts-track-format` for the codes, the original's messages for the rules).
  */
 
-export interface PieceDef {
-  name: string;
-  /** Codes for each rotation (R cycles them). */
-  codes: number[];
-  /** Terrain pieces go on the terrain layer. */
-  terrain?: boolean;
-}
+export { PALETTE_PAGES };
 
-export interface Category {
-  name: string;
-  pieces: PieceDef[];
-}
+/** The palette's code for the other tiles of a bigger piece: to its east / south of it. */
+export const PALETTE_EAST = 255;
+export const PALETTE_SOUTH = 254;
 
-const p = (name: string, ...codes: number[]): PieceDef => ({ name, codes });
-const t = (name: string, ...codes: number[]): PieceDef => ({ name, codes, terrain: true });
-
-export const CATALOG: Category[] = [
-  {
-    name: 'Roads',
-    pieces: [
-      p('road', 0x04, 0x05),
-      p('dirt road', 0x0e, 0x0f),
-      p('icy road', 0x18, 0x19),
-      p('start/finish line', 0x01, 0xb5, 0xb3, 0xb4),
-      p('dirt start/finish line', 0x86, 0x89, 0x87, 0x88),
-      p('icy start/finish line', 0x93, 0x96, 0x94, 0x95),
-      p('crossroad', 0x4a),
-      p('dirt crossroad', 0x7d),
-      p('icy crossroad', 0x8a),
-    ],
-  },
-  {
-    name: 'Corners',
-    pieces: [
-      p('sharp corner', 0x06, 0x07, 0x08, 0x09),
-      p('large corner', 0x0a, 0x0b, 0x0c, 0x0d),
-      p('dirt sharp corner', 0x10, 0x11, 0x12, 0x13),
-      p('dirt large corner', 0x14, 0x15, 0x16, 0x17),
-      p('icy sharp corner', 0x1a, 0x1b, 0x1c, 0x1d),
-      p('icy large corner', 0x1e, 0x1f, 0x20, 0x21),
-      p('banked corner', 0x34, 0x35, 0x36, 0x37),
-      p('split sharp corner', 0x4f, 0x4b, 0x4d, 0x51, 0x4c, 0x52, 0x50, 0x4e),
-      p('split large corner', 0x5b, 0x57, 0x59, 0x5d, 0x58, 0x5e, 0x5c, 0x5a),
-      p('dirt split corner', 0x82, 0x7e, 0x80, 0x84, 0x7f, 0x85, 0x83, 0x81),
-      p('icy split corner', 0x8f, 0x8b, 0x8d, 0x91, 0x8c, 0x92, 0x90, 0x8e),
-      p('chicane', 0x3c, 0x3e, 0x3d, 0x3f),
-    ],
-  },
-  {
-    name: 'Elevated',
-    pieces: [
-      p('elevated road', 0x22, 0x23),
-      p('solid elevated road', 0x63, 0x64),
-      p('elevated span over road', 0x65, 0x66),
-      p('elevated span', 0x67, 0x68),
-      p('elevated corner', 0x69, 0x6a, 0x6b, 0x6c),
-      p('elevated ramp', 0x26, 0x25, 0x27, 0x24),
-      p('bridge ramp', 0x3a, 0x39, 0x3b, 0x38),
-      p('solid ramp', 0x61, 0x60, 0x62, 0x5f),
-    ],
-  },
-  {
-    name: 'Specials',
-    pieces: [
-      p('loop', 0x40, 0x41),
-      p('tunnel', 0x42, 0x43),
-      p('pipe', 0x44, 0x45),
-      p('pipe start/end', 0x46, 0x48, 0x47, 0x49),
-      p('pipe obstacle', 0x53, 0x54),
-      p('slalom road', 0x73, 0x74),
-      p('highway', 0x6d, 0x6e),
-      p('highway start/end', 0x6f, 0x72, 0x71, 0x70),
-      p('banked road', 0x32, 0x30, 0x33, 0x31),
-      p('banked road start/end', 0x28, 0x2e, 0x2a, 0x2c, 0x2f, 0x2b, 0x2d, 0x29),
-      p('corkscrew', 0x55, 0x56),
-      p('left corkscrew up/down', 0x75, 0x76, 0x77, 0x78),
-      p('right corkscrew up/down', 0x79, 0x7a, 0x7b, 0x7c),
-    ],
-  },
-  {
-    name: 'Scenery',
-    pieces: [
-      p('palm tree', 0x97),
-      p('cactus', 0x98),
-      p('pine tree', 0x99),
-      p('tennis court', 0x9a),
-      p('gas station', 0x9b, 0x9c, 0x9d, 0x9e),
-      p('barn', 0x9f, 0xa0, 0xa1, 0xa2),
-      p('office building', 0xa3, 0xa4, 0xa5, 0xa6),
-      p('windmill', 0xa7, 0xa8, 0xa9, 0xaa),
-      p('ship', 0xad, 0xae, 0xac, 0xab),
-      p("Joe's diner", 0xaf, 0xb0, 0xb1, 0xb2),
-    ],
-  },
-  {
-    name: 'Terrain',
-    pieces: [
-      t('flat ground', 0x00),
-      t('water', 0x01),
-      t('coast', 0x05, 0x02, 0x03, 0x04),
-      t('hill', 0x06),
-      t('hill slope', 0x07, 0x08, 0x09, 0x0a),
-      t('angled slope (high corner)', 0x0b, 0x0c, 0x0d, 0x0e),
-      t('angled slope (low corner)', 0x11, 0x12, 0x0f, 0x10),
-    ],
-  },
-];
-
-const ELEMENT_NAMES = new Map<number, string>();
-const TERRAIN_NAMES = new Map<number, string>();
-for (const c of CATALOG) for (const pc of c.pieces) for (const code of pc.codes) (pc.terrain ? TERRAIN_NAMES : ELEMENT_NAMES).set(code, pc.name);
-
-/** What the original's editor would call a tile (element, else terrain). */
+/** What the original's editor calls the piece covering a tile ("" for none). */
 export function tileName(track: Track, x: number, z: number): string {
   const a = anchorOf(track, x, z);
-  const code = a ? track.elements[a[0]]![a[1]]! : 0;
-  if (code !== 0) return ELEMENT_NAMES.get(code) ?? 'unknown piece';
-  return TERRAIN_NAMES.get(track.terrain[x]![z]!) ?? 'flat ground';
+  return a ? elementName(track.elements[a[0]]![a[1]]!) : '';
+}
+
+export function elementName(code: number): string {
+  return (ELEMENT_NAMES[code] ?? '').trim();
 }
 
 export const FILLER_SW = 0xfe;
@@ -160,20 +61,17 @@ export function removeAt(track: Track, x: number, z: number): void {
   for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) if (inGrid(a[0] + i, a[1] - j)) track.elements[a[0] + i]![a[1] - j] = 0;
 }
 
-/** Place a piece with its anchor at (x, z); false when it doesn't fit on the grid. */
+/** Place a piece with its anchor at (x, z) (0 erases); false when it doesn't fit on the grid. */
 export function placeAt(track: Track, x: number, z: number, code: number): boolean {
   const { w, h } = footprintOf(code);
   if (!inGrid(x, z) || !inGrid(x + w - 1, z - h + 1)) return false;
   for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) removeAt(track, x + i, z - j);
+  if (code === 0) return true;
   track.elements[x]![z] = code;
   if (h > 1) track.elements[x]![z - 1] = FILLER_SW;
   if (w > 1) track.elements[x + 1]![z] = FILLER_NE;
   if (w > 1 && h > 1) track.elements[x + 1]![z - 1] = FILLER_SE;
   return true;
-}
-
-export function setTerrain(track: Track, x: number, z: number, code: number): void {
-  if (inGrid(x, z)) track.terrain[x]![z] = code;
 }
 
 const STARTS = new Set([0x01, 0xb5, 0xb3, 0xb4, 0x86, 0x89, 0x87, 0x88, 0x93, 0x96, 0x94, 0x95]);
@@ -184,4 +82,69 @@ export function startCount(track: Track): number {
   let n = 0;
   for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) if (isStart(track.elements[x]![z]!)) n++;
   return n;
+}
+
+// The original's messages ("]" breaks a line in its strings).
+export const MESSAGES = {
+  water: ['Limited objects allowed on water.', 'Only Overpass pieces with stilts,', 'overpass span & boat allowed.'],
+  angled: ['No Objects are Allowed on', 'the angled terrain edge blocks.'],
+  slope: ['Only straight roads, or', 'elevated ramp is allowed', 'on straight edges of terrain.'],
+  noStart: ['No start/finish', 'line on track.', 'Must have one.'],
+  manyStarts: ['Too many start/finish', 'lines on track.', 'Use one only.'],
+  noPath: ['Must be at least one', 'complete path around the track.'],
+  ok: ['Track ok.'],
+};
+
+/** Pieces allowed on water: elevated road on stilts, elevated span and the boat. */
+const ON_WATER = new Set([0x22, 0x23, 0x67, 0x68, 0xab, 0xac, 0xad, 0xae]);
+/** Straight roads (north-south, east-west) and elevated ramps (by the way they climb). */
+const ROAD_AXIS = new Map<number, 'NS' | 'EW'>([
+  [0x04, 'NS'], [0x05, 'EW'], [0x0e, 'NS'], [0x0f, 'EW'], [0x18, 'NS'], [0x19, 'EW'],
+  [0x26, 'NS'], [0x27, 'NS'], [0x24, 'EW'], [0x25, 'EW'],
+]);
+
+/**
+ * The original's placement rules, checked on every tile the piece would cover: nothing but
+ * overpasses and the boat on water, nothing on the angled hill and coast corners, and only
+ * roads or elevated ramps running straight up or down a slope. Returns the message, or null.
+ */
+export function placementError(track: Track, x: number, z: number, code: number): string[] | null {
+  if (code === 0) return null;
+  const { w, h } = footprintOf(code);
+  for (let i = 0; i < w; i++) {
+    for (let j = 0; j < h; j++) {
+      const t = track.terrain[x + i]?.[z - j] ?? 0;
+      if (t === 0x01 && !ON_WATER.has(code)) return MESSAGES.water;
+      if ((t >= 0x02 && t <= 0x05) || (t >= 0x0b && t <= 0x12)) return MESSAGES.angled;
+      if (t >= 0x07 && t <= 0x0a) {
+        const axis = t === 0x07 || t === 0x09 ? 'NS' : 'EW';
+        if (ROAD_AXIS.get(code) !== axis) return MESSAGES.slope;
+      }
+    }
+  }
+  return null;
+}
+
+/** The original's track check ("C" in the editor, and before driving). */
+export function checkTrack(track: Track): string[] {
+  const n = startCount(track);
+  if (n === 0) return MESSAGES.noStart;
+  if (n > 1) return MESSAGES.manyStarts;
+  const start = findStart(track)!;
+  const built = buildTrack(track, null);
+  built.group.traverse((o) => {
+    const m = o as { geometry?: { dispose(): void }; material?: { dispose(): void } };
+    m.geometry?.dispose();
+    m.material?.dispose();
+  });
+  const route = buildRoute(built.pieces, start.dir);
+  return route?.closed ? MESSAGES.ok : MESSAGES.noPath;
+}
+
+/** A terrain background for a new track from the original's presets (rows north first). */
+export function terrainFromPreset(bytes: Uint8Array | null): number[][] {
+  const grid = Array.from({ length: GRID }, () => new Array<number>(GRID).fill(0));
+  if (!bytes) return grid;
+  for (let x = 0; x < GRID; x++) for (let z = 0; z < GRID; z++) grid[x]![z] = bytes[(GRID - 1 - z) * GRID + x] ?? 0;
+  return grid;
 }

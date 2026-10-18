@@ -48,9 +48,11 @@ with our own assets, deployed as a playable web page with online lap times.
       (Option menu / G); the lap clock no longer starts while the car settles on the line
 - [x] Car selection like the original's showroom: car turning on the stage, acceleration graph,
       the original description, Done/Next/Last/Auto-Manual/Color; manual gearbox (A up, Z down)
-- [x] Track editor like the original (Track select → New/Edit Tracks): scrolling 12×11 map, pieces
-      by category, Horizon/Load/New/Save/Done; tracks saved in the browser as TRK bytes and listed
-      with the others (no online times for them)
+- [x] Track editor like the original (Track select → New/Edit Tracks), laid out from its screen and
+      drawn with its own icons and font from the player's files: the 12×11 track window, the ten
+      palette pages with every orientation, page bar, Horizon/Load/New (five terrain backgrounds)/
+      Save/Done, its keyboard and mouse controls, placement rules and track check; tracks saved in
+      the browser as TRK bytes and listed with the others (no online times for them)
 
 ## Next (in order)
 6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.

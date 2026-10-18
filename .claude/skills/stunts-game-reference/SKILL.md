@@ -41,7 +41,10 @@ Acura NSX, Audi Quattro Sport, Ferrari GTO, Lamborghini Countach, Lamborghini LM
 Original car parameter set (car*.res `simd` chunk, see https://wiki.stunts.hu/wiki/Car_files): number of gears, mass, braking effectiveness, idle/downshift/upshift/max rpm, gear ratios, aerodynamic resistance, torque curve (indexed by rpm), grip, air grip, per-surface grip modifiers, collision dims, wheel coordinates. Our `CarSpec` mirrors these fields so tuning feels familiar.
 
 ## Opponents
-Original had AI opponents (Skid Vicious, Herr Otto Partz, Cherry Chassis, Bernie Rubber, Helen Wheels, Joe "Speed" Weisberg) who race the same track simultaneously. Post-MVP for us (follow tile path).
+Original had AI opponents who race the same track simultaneously. From OPP1..6.PRE (player's files): 1 Squealin' Bernie Rubber (easiest), 2 Herr Otto Partz (fear of heights), 3 Smokin' Joe Stallin (slow on straights), 4 Cherry Chassis (bad at corners), 5 Helen Wheels (likes bumping), 6 Skid Vicious (best).
+- `sped` (16 bytes, mph per element type, wiki "Opponent files"): road paved/dirt/icy, sharp corner p/d/i, large corner p/d/i, banked corner, bridge, slalom, cork up/down, chicane, loop (115 for all), cork l/r. E.g. Skid 200,150,100,50,30,20,100,80,40,175,115,60,50,150,140,50; Bernie 120,75,50,40,30,20,60,40,20,90,115,20,30,70,80,50.
+- `path` (186 bytes, one per element code): per-piece trouble level, matching each bio (Bernie 10 on loops, 2-5 on pipes/corks; Otto 2 on elevated pieces; Joe 1-3 on straights; Cherry 1-4 on corners; Helen and Skid none).
+- `edes` bio, `enam` initials, `ev*` lines when they win, `ed*` when they lose, `ed4a` after a collision; `winn`/`lose` = frame sequences of op01-op08 in OPP?WIN.PVS / OPP?LOSE.PVS. SDOSEL.PVS = the opponent selection screen (scrn, opp0-opp6 portraits, clip).
 
 ## What the original looks like (from screenshots, e.g. https://www.oldgames.sk/en/game/stunts/screenshots/)
 - 320×200, 256 colours, flat-shaded polygons, no textures; distant objects simply pop in (no fog).

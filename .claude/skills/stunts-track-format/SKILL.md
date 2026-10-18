@@ -127,3 +127,14 @@ The user's own Stunts 1.1 copy lives in `original_game/STUNTS11/` (git-ignored, 
 - `node tools/stunts/inspect.mjs original_game/STUNTS11/GAME1.P3S` lists shapes with bounding boxes; add a shape id to dump its vertices and polygons.
 - `tools/stunts/formats.mjs`: our own decoder for the packed format (Huffman + RLE passes), resource containers, and 3D shapes (format facts from wiki.stunts.hu and the GPL stressed editor; no code copied).
 - Use these for measurements only. Never import original geometry, bitmaps or sounds into the game.
+
+## The original track editor (TEDIT.PRE, SDTEDIT.PES)
+Our editor (`src/ui/trackEditor.ts`) copies it; its tables come from `node tools/stunts/gen-editor.mjs` → `src/track/editorTables.generated.ts`.
+- `pbox`: 11 grids of 6x6 bytes. Grids 1-10 are the palette pages (paved, dirt, icy, specials, banked, bridges/corners, chicanes/highway, elevated, corkscrews, scenery), element codes row by row from the top, laid out like a little map with every orientation; 255 = tile east of a bigger piece, 254 = south; 0 = the blank square (erases). Grid 0's purpose is unknown.
+- `snam` (4 chars per code) = icon name in SDTEDIT.PES, used on both palette and map; `mnam` = 1-bit masks; `tnam` (3 chars per code) → the name string `e<tnam>` (e.g. `esrp` "paved road"; split corners are called "paved road").
+- `ter0`..`ter4`: the five backgrounds New offers, 30x30 terrain bytes north row first (short ones end early = flat).
+- SDTEDIT.PES icons are EGA bitmaps (wiki "Resource file format"): header uint16 width in BYTES, height, centre x/y, position x/y, planar[4]; then up to 4 stacked 1-bit planes. Pixel colour = OR of the LOW nibbles of planar[] for the planes whose bit is set (EGA colours 0-15 = the first 16 palette entries); planar[2]'s high nibble marks column-first planes. 16x16 tiles have a transparent first column and last row = the black grid lines; draw them at (tile x - 1, tile y).
+- Terrain icons: `flat`, `lake`, `lak1`..`lak4` = coasts 02-05, `high`, slopes 07-0A = `goun gouw gous goue`, `gou1`..`gou8` = 0B-12. Cursors `crs0`-`crs3` = 1x1, 1x2, 2x1, 2x2.
+- Screen (320x200): tiles at (10 + 16i, 4 + 16j), 12x11 visible; scroll bars x 203-207 / y 181-185; palette cells at (222 + 16c, 36 + 16r); page bar y 133-137; Horizon 222,140 95x15; Load/New y 156, Save/Done y 172 (47x15); name line at (10, 192); dialogs centred on (160, 99). Focus frames are light red, 1 px.
+- Rules (its messages): only elevated road on stilts, elevated span and the boat on water; nothing on angled hill corners or coasts; on slopes only straight roads or elevated ramps going up/down. Check (C): one start/finish line, a complete path around.
+- Fonts (`FONTDEF.FNT` etc., wiki "Font file"): rows are left-to-right bytes, top bit leftmost (not little-endian as the wiki says).
