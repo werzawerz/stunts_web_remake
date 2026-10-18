@@ -60,18 +60,19 @@ with our own assets, deployed as a playable web page with online lap times.
       they race beside you with their own speed table and weak spots (learnt per track before the
       race), cars collide, and afterwards their win/lose animation and lines; in replays too
 
+- [x] Deploy: GitHub Pages via GitHub Actions on every push to main (public repo), with the original
+      files the game reads published in `public/original/` (owner's decision)
+
 ## Next (in order)
-6. **Deploy** — GitHub repo + Cloudflare Pages or Netlify, public URL, Supabase keys as env vars.
 
 ## Later
 11. **Sharing editor tracks** online (Supabase), with their own fastest times.
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
 
 ## Open decisions
-- **Original car files on the public site.** The game can show the original cars wherever the
-  files are available (`public/original/` is shipped with a build). Whether to publish them is the
-  owner's call; it must be revisited before any monetisation, where "players load their own
-  Stunts files" or our own models are the safe options.
+- **Original files on the public site.** Published by the owner's decision (2026-10-18). Must be
+  revisited before any monetisation, where "players load their own Stunts files" or our own assets
+  are the safe options.
 
 ## Principles
 - Faithful to the original: check mechanics on wiki.stunts.hu and measurements in the original

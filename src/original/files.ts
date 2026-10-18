@@ -1,9 +1,10 @@
 /*
  * Where original Stunts files are looked up at runtime:
- *  1. /original_game/STUNTS11/ — the developer's own copy (git-ignored, served only by the dev server)
- *  2. <base>/original/         — public/original/, shipped with a build only if the owner puts files there
+ *  1. /original_game/STUNTS11/ — the developer's own full copy (git-ignored; dev server only)
+ *  2. <base>/original/         — public/original/: the files the game reads, published with the
+ *                                site by the owner's decision (see CLAUDE.md)
  */
-const SOURCES = ['/original_game/STUNTS11/', `${import.meta.env.BASE_URL}original/`];
+const SOURCES = [...(import.meta.env.DEV ? ['/original_game/STUNTS11/'] : []), `${import.meta.env.BASE_URL}original/`];
 
 async function fetchBytes(url: string): Promise<Uint8Array | null> {
   try {

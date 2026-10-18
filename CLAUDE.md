@@ -8,4 +8,9 @@ Before working, load the relevant project skills:
 - `stunts-track-format` — TRK file spec and tile codes
 - `stunts-game-reference` — how the original game plays
 
-Only our own assets — never bundle original Stunts files or copy restunts code.
+Original Stunts files: `public/original/` holds exactly the files the game reads at runtime, published
+with the site by the owner's decision (2026-10-18). Add a file there only when the game starts
+loading it; never commit the rest of `original_game/`. Never copy restunts code (read it for facts only).
+
+Deploy: every push to `main` builds and publishes to GitHub Pages (`.github/workflows/deploy.yml`,
+site under `/stunts_web_remake/`). `.env.production` holds the public Supabase client settings.
