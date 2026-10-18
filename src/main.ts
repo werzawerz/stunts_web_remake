@@ -880,6 +880,8 @@ function loadScene(track: Track): void {
 
   const start = findStart(track);
   route = start ? buildRoute(built.pieces, start.dir) : null;
+  // Penalties follow the original's path, every way through the track (see race/lap.ts).
+  if (route) route.graph = checkTrackPath(track).graph ?? null;
   if (start) {
     const f = ({ N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] } as const)[start.dir];
     // Start a little behind the line so the player drives through it.

@@ -59,6 +59,11 @@ export function buildSampleTrack(horizon: Horizon = Horizon.Country): Track {
     t.terrain[15]![z] = 0x0a; // uphill west>east
     t.terrain[18]![z] = 0x08; // uphill east>west
   }
+  // Its corners: angled pieces raised towards the hill (the original's terrain edges must match).
+  t.terrain[15]![13] = 0x0e; // NE corner raised
+  t.terrain[18]![13] = 0x0b; // NW
+  t.terrain[15]![16] = 0x0d; // SE
+  t.terrain[18]![16] = 0x0c; // SW
 
   return t;
 }

@@ -1,3 +1,4 @@
+import { ELEMENT_SHAPES } from '../original/elementTable.generated';
 import { ELEMENT_PATHS } from './elementPaths.generated';
 import { GRID, type Track } from './trkFormat';
 
@@ -52,6 +53,19 @@ export interface TrackCheck {
   error: TrackError | null;
   /** Where the check stopped (the tile it was looking at), for pointing the cursor at it. */
   at: [number, number] | null;
+  /** For a track that passes: its path, as the race follows it for penalties. */
+  graph?: PathGraph;
+}
+
+/**
+ * The track's path as the original keeps it for its penalty check: the pieces in the order the
+ * check first drove them (0 = start/finish), each with the tiles it covers, and up to two pieces
+ * that follow it (a fork's second way, or a second way joining in).
+ */
+export interface PathGraph {
+  pieces: { x0: number; x1: number; z0: number; z1: number }[];
+  next1: number[];
+  next2: number[];
 }
 
 // Terrain edge profiles per terrain code 0x00-0x12, one table per side: 0 ground level, 1 hill
@@ -129,6 +143,8 @@ interface Branch {
   runway: number;
   prevX: number;
   prevZ: number;
+  /** The piece this way came from (index into the path), -1 before the start/finish line. */
+  from: number;
 }
 
 export function checkTrackPath(track: Track): TrackCheck {
@@ -162,6 +178,13 @@ export function checkTrackPath(track: Track): TrackCheck {
     return c >= 0xb6 && c < 0xfd ? 0x04 : c; // stray slope codes in a file read as plain road
   };
   const visited: { x: number; z: number; block: number; backward: boolean }[] = [];
+  const graph: PathGraph = { pieces: [], next1: [], next2: [] };
+  /** Record that piece `b` follows piece `a` (in a's first free slot). */
+  const link = (a: number, b: number): void => {
+    if (a < 0) return;
+    if (graph.next1[a] === -1) graph.next1[a] = b;
+    else graph.next2[a] = b;
+  };
   const stack: Branch[] = [];
   let complete = false;
   // Where we are, heading where, and what the road was when it left the previous element.
@@ -173,6 +196,7 @@ export function checkTrackPath(track: Track): TrackCheck {
   let gap = 0;
   let prevX = start.x;
   let prevZ = start.z;
+  let from = -1;
 
   for (;;) {
     let next: Branch | null = null;
@@ -209,10 +233,11 @@ export function checkTrackPath(track: Track): TrackCheck {
           if (v.x !== ax || v.z !== az || v.block !== b) continue;
           if (v.backward !== backward) return { error: 'wrongWay', at: [ax, az] };
           closed = true;
+          link(from, i);
           if (i === 0) complete = true;
         }
         if (closed) continue;
-        found.push({ x: ax, z: az, code, block: b, backward, type, runway, prevX, prevZ });
+        found.push({ x: ax, z: az, code, block: b, backward, type, runway, prevX, prevZ, from });
       }
       if (found.length > 0) {
         for (const extra of found.slice(1)) {
@@ -236,15 +261,21 @@ export function checkTrackPath(track: Track): TrackCheck {
       }
       // The road ends here: carry on with a fork left for later.
       const b = stack.pop();
-      if (!b) return complete ? { error: null, at: null } : { error: 'noPath', at: null };
+      if (!b) return complete ? { error: null, at: null, graph } : { error: 'noPath', at: null };
       next = b;
-      ({ type, runway, prevX, prevZ } = b);
+      ({ type, runway, prevX, prevZ, from } = b);
     }
 
     // Drive through the element.
     if (gap > 1) return { error: 'longJump', at: [next.x, next.z] };
     gap = 0;
     visited.push({ x: next.x, z: next.z, block: next.block, backward: next.backward });
+    const multi = ELEMENT_SHAPES[next.code]?.multi ?? 0;
+    graph.pieces.push({ x0: next.x, x1: next.x + (multi & 2 ? 1 : 0), z0: next.z - (multi & 1 ? 1 : 0), z1: next.z });
+    graph.next1.push(-1);
+    graph.next2.push(-1);
+    link(from, visited.length - 1);
+    from = visited.length - 1;
     const [inPt, outPt, inType, outType, plain] = ELEMENT_PATHS[next.code]![next.block]!;
     runway = plain === 0 ? runway + 1 : 0;
     if (visited.length >= MAX_PIECES) return { error: 'manyPieces', at: [next.x, next.z] };

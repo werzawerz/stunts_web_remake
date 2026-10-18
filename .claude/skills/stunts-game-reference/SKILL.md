@@ -18,7 +18,7 @@ Original assets (3D shapes, car bitmaps, tracks, music) are copyrighted. **We sh
 5. High score table per track (.HIG, top 7 entries: name, car, time).
 
 ## Rules & penalties
-- Leaving the road or skipping track pieces is allowed while driving but **missing pieces (shortcuts)** produces a penalty time added at the end (original: time penalty proportional to skipped road). We implement checkpoints per road tile; MVP: lap only valid if all checkpoints hit, later: Stunts-like penalty.
+- **Penalties** (the game's detect_penalty, restunts seg001; implemented in `src/race/lap.ts`): the track check's path is a graph, each piece with up to two following pieces, so every way through a fork is legitimate. When the car's tile leaves the piece it was last found on, the game searches ahead of the last confirmed piece (first successors, then forks' other ways from their second piece on) for the nearest piece on that tile, counting pieces passed over. 0-2: fine. More: confirmed only after 3 pieces in a row, penalty 3 s × pieces passed over by then (min 18 s). Reaching start/finish: 3 s per piece passed over. Not found ahead: "lost", no penalty. Tiles only, no heights.
 - Crash: hitting objects/walls hard, landing badly, or falling off structures blows up the car → race over (MVP: restart from last road tile or end race; original ends the race unless you "Continue" in replay).
 - Driving on grass/off-road is much slower (low grip/high drag).
 

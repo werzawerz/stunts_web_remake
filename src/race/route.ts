@@ -1,5 +1,6 @@
 import { TILE } from '../track/constants';
 import type { TrackPiece } from '../track/trackBuilder';
+import type { PathGraph } from '../track/check';
 import type { Dir } from '../track/tiles';
 
 /** The track as the race sees it: road elements in driving order, starting with start/finish. */
@@ -23,6 +24,8 @@ export interface Route {
   guided: boolean[];
   /** Per line3d point: a take-off point, where the route jumps a gap to the next piece. */
   lip: boolean[];
+  /** The original's path with every way through the track, for penalties (see lap.ts). */
+  graph?: PathGraph | null;
 }
 
 const cellKey = (x: number, z: number): number => x * 1000 + z;

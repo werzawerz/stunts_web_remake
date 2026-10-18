@@ -4,6 +4,7 @@ import { createCar, DEFAULT_CAR, stepCar, speedOf } from '../physics/car';
 import { parseResources, parseShape, unpack, type Shape } from '../original/formats';
 import { Autopilot } from '../race/autopilot';
 import { createLap, stepLap } from '../race/lap';
+import { checkTrackPath } from './check';
 import { buildRoute, elementAt } from '../race/route';
 import { TILE } from './constants';
 import { findStart } from './start';
@@ -32,6 +33,7 @@ describe.skipIf(!available)('autopilot laps on the original tracks', () => {
       const built = buildTrack(track, shapes);
       const start = findStart(track)!;
       const route = buildRoute(built.pieces, start.dir)!;
+      route.graph = checkTrackPath(track).graph;
       const f = { N: [0, 1], E: [1, 0], S: [0, -1], W: [-1, 0] }[start.dir] as [number, number];
       const e = start.centre[0] - f[0] * 12;
       const n = start.centre[1] - f[1] * 12;
@@ -46,7 +48,7 @@ describe.skipIf(!available)('autopilot laps on the original tracks', () => {
       }
       const where = elementAt(route, car.pos[0], car.pos[1]);
       const piece = where >= 0 ? route.pieces[where]! : null;
-      const at = `at tile ${Math.floor(car.pos[0] / TILE)},${Math.floor(car.pos[1] / TILE)} (${piece?.kind ?? 'off route'}, element ${where}/${route.pieces.length}, next ${lap.next}) speed ${speedOf(car).toFixed(1)} height ${car.pos[2].toFixed(1)}`;
+      const at = `at tile ${Math.floor(car.pos[0] / TILE)},${Math.floor(car.pos[1] / TILE)} (${piece?.kind ?? 'off route'}, element ${where}/${route.pieces.length}, confirmed ${lap.confirmed}) speed ${speedOf(car).toFixed(1)} height ${car.pos[2].toFixed(1)}`;
       expect(car.crashed, `crashed: ${car.crashReason} ${car.crashDetail ?? ""} ${at}`).toBe(false);
       expect(lap.phase, `not finished ${at}`).toBe('finished');
       expect(lap.penaltySec, `penalty ${lap.penaltySec} s`).toBe(0);

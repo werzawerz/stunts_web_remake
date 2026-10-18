@@ -1,12 +1,17 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { findStart } from '../track/start';
+import { parseTrk } from '../track/trkFormat';
 import { TILE } from '../track/constants';
 import { buildSampleTrack } from '../track/sampleTrack';
 import { buildTrack } from '../track/trackBuilder';
 import { createLap, lapTotal, stepLap, type LapState } from './lap';
 import { buildRoute, elementAt, type Route } from './route';
+import { checkTrackPath } from '../track/check';
 import type { Vec3 } from '../physics/vec';
 
 const route = buildRoute(buildTrack(buildSampleTrack()).pieces, 'E')!;
+route.graph = checkTrackPath(buildSampleTrack()).graph;
 
 /** Centre of an element's first tile, at the height of its road's start. */
 const at = (i: number): Vec3 => {
@@ -120,5 +125,44 @@ describe('lap and penalty (original rules)', () => {
     const back = velAlong(1).map((v) => -v) as Vec3;
     stepLap(s, route, at(1), back, true, false);
     expect(s.wrongWay).toBe(true);
+  });
+});
+
+describe('forks on the original tracks (user report: penalty on the quicker way round DEFAULT)', () => {
+  const DIR = 'original_game/STUNTS11';
+  it.skipIf(!existsSync(`${DIR}/DEFAULT.TRK`))('any way round is a clean lap, like in the original', () => {
+    for (const name of ['DEFAULT', 'BERNIES', 'CHERRIS', 'HELENS', 'JOES', 'SKIDS']) {
+      const track = parseTrk(new Uint8Array(readFileSync(`${DIR}/${name}.TRK`)));
+      const start = findStart(track)!;
+      const r = buildRoute(buildTrack(track).pieces, start.dir)!;
+      const g = checkTrackPath(track).graph!;
+      r.graph = g;
+      const forks = g.next2.map((n, i) => (n >= 0 && g.next1[i]! >= 0 ? i : -1)).filter((i) => i >= 0);
+      // Once along the first way everywhere, then once taking each fork's other way.
+      for (const take of [-1, ...forks]) {
+        const lapPieces: number[] = [];
+        const seen = new Set<number>();
+        let p = 0;
+        for (;;) {
+          const n = p === take ? g.next2[p]! : g.next1[p]!;
+          if (n <= 0 || seen.has(n)) break;
+          seen.add(n);
+          lapPieces.push(n);
+          p = n;
+        }
+        if (g.next1[p] !== 0 && g.next2[p] !== 0) continue; // that way doesn't lead back round
+        const s = createLap();
+        const centre = (i: number): Vec3 => {
+          const q = g.pieces[i]!;
+          return [(q.x0 + 0.5) * TILE, (q.z0 + 0.5) * TILE, 0];
+        };
+        stepLap(s, r, [r.line.centre[0] - r.line.dir[0] * 12, r.line.centre[1] - r.line.dir[1] * 12, 0], [0, 0, 0], true, false);
+        for (const i of lapPieces) stepLap(s, r, centre(i), [0, 0, 0], true, false);
+        stepLap(s, r, [r.line.centre[0] + r.line.dir[0] * 2, r.line.centre[1] + r.line.dir[1] * 2, 0], [0, 0, 0], true, false);
+        const way = take < 0 ? 'first way' : `fork at piece ${take}`;
+        expect(s.phase, `${name} ${way}`).toBe('finished');
+        expect(s.penaltySec, `${name} ${way}`).toBe(0);
+      }
+    }
   });
 });
