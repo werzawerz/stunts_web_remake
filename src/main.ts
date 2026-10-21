@@ -32,11 +32,11 @@ import { MAX_REPLAY_TICKS, Replay, type Frame } from './race/replay';
 import { ReplayView, type ReplayAction, type ReplayMenuItem } from './ui/replayView';
 import { createLap, lapTotal, stepLap, type LapState } from './race/lap';
 import { buildRoute, type Route } from './race/route';
-import { getGhost, getLeaderboard, isOnlineTrack, submitLapTime } from './net/supabase';
+import { getGhost, getLeaderboard, isOnlineTrack, listSharedTracks, shareTrack, submitLapTime } from './net/supabase';
 import { Ghost, startOnLine } from './race/ghost';
 import { listReplays, saveReplay, type SavedReplay } from './race/replayStore';
 import { CarSound } from './audio/sound';
-import { listTracks, saveTrack } from './track/trackStore';
+import { listTracks, saveTrack, setOnlineId, trackFromBase64, trackToBase64 } from './track/trackStore';
 import { checkTrackPath } from './track/check';
 import { TrackEditor, type EditorAction } from './ui/trackEditor';
 import { OpponentSelect, type OpponentAction } from './ui/opponentSelect';
@@ -203,10 +203,33 @@ const TRACKS: TrackEntry[] = [
 ];
 /** Names for the track lists; saved tracks that can't be driven yet are marked. */
 const trackNames = (): string[] => TRACKS.map((t) => (t.drivable === false ? `${t.name} (unfinished)` : t.name));
-/** Put the tracks made in the editor at the end of the list (after a save). */
+/** Tracks shared online by everyone, newest first. */
+let sharedTracks: { id: string; name: string; author: string; track: Track }[] = [];
+/** Fetch the shared tracks (at start, when choosing a track, after sharing one). */
+function refreshShared(): void {
+  listSharedTracks()
+    .then((rows) => {
+      sharedTracks = rows.flatMap((r) => {
+        try {
+          return [{ id: r.id, name: r.name, author: r.author, track: trackFromBase64(r.trkBase64) }];
+        } catch {
+          return []; // not a readable track
+        }
+      });
+      refreshCustomTracks();
+    })
+    .catch(() => undefined);
+}
+/** After the originals: the shared tracks, then this device's own that aren't shared (yet). */
 function refreshCustomTracks(): void {
-  for (let i = TRACKS.length - 1; i >= 0; i--) if (TRACKS[i]!.id.startsWith('custom-')) TRACKS.splice(i, 1);
+  for (let i = TRACKS.length - 1; i >= 0; i--) if (TRACKS[i]!.id.startsWith('custom-') || TRACKS[i]!.id.startsWith('user-')) TRACKS.splice(i, 1);
+  for (const s of sharedTracks) {
+    const t = s.track;
+    TRACKS.push({ id: s.id, name: `${s.name} (${s.author})`, drivable: checkTrackPath(t).error === null, load: async () => t });
+  }
+  const shared = new Set(sharedTracks.map((s) => s.id));
   for (const t of listTracks()) {
+    if (t.onlineId && shared.has(t.onlineId)) continue;
     const name = t.name;
     TRACKS.push({
       id: `custom-${name}`,
@@ -220,6 +243,14 @@ function refreshCustomTracks(): void {
 let trackIndex = 0;
 let trackId = 'default';
 refreshCustomTracks();
+refreshShared();
+
+/** The list entry for the track saved here as `name`: its shared copy once it has one. */
+function savedTrackIndex(name: string): number {
+  const onlineId = listTracks().find((t) => t.name === name)?.onlineId;
+  const i = onlineId ? TRACKS.findIndex((t) => t.id === onlineId) : -1;
+  return i >= 0 ? i : TRACKS.findIndex((t) => t.id === `custom-${name}`);
+}
 let currentTrack: Track = buildSampleTrack();
 // Original track piece shapes, when the player's Stunts files are available.
 let trackShapes: Map<string, Shape> | null = null;
@@ -475,9 +506,22 @@ const trackEditor = new TrackEditor({
     return { track, name: e.id.startsWith('custom-') ? e.name : '' };
   },
   save: (name, track) => {
-    const ok = saveTrack(name, track);
-    if (ok) refreshCustomTracks();
-    return ok;
+    if (!saveTrack(name, track)) return false;
+    refreshCustomTracks();
+    // Drivable tracks are shared online for every device; unfinished ones stay on this one.
+    if (checkTrackPath(track).error !== null) {
+      trackEditor.notice(['Saved on this device.', 'It is shared online once', 'it passes the track check.']);
+      return true;
+    }
+    shareTrack({ name, author: loadName() || 'anonymous', trkBase64: trackToBase64(track) })
+      .then((id) => {
+        if (!id) return;
+        setOnlineId(name, id);
+        refreshShared();
+        trackEditor.notice(['Shared online:', 'every device can race it now.']);
+      })
+      .catch(() => trackEditor.notice(['Saved on this device.', 'Sharing it online failed.']));
+    return true;
   },
 });
 
@@ -487,7 +531,7 @@ function editorAction(a: EditorAction): void {
     // As in the original, a track is driven as it was saved.
     trackEditor.close();
     refreshCustomTracks();
-    const i = TRACKS.findIndex((t) => t.id === `custom-${a.name}`);
+    const i = savedTrackIndex(a.name);
     if (i >= 0) void selectTrack(i, 1, true);
   }
 }
@@ -510,7 +554,10 @@ function showroomDone(): void {
 
 function menuAction(a: MenuAction): void {
   if (a.type === 'showroom') showroom.open(carIndex, carPaint, manualGearbox);
-  else if (a.type === 'trackselect') trackSelect.open();
+  else if (a.type === 'trackselect') {
+    refreshShared();
+    trackSelect.open();
+  }
   else if (a.type === 'opponent') opponentSelect.open(opponentId);
   else if (a.type === 'drive') {
     menu.close();

@@ -66,7 +66,7 @@ with our own assets, deployed as a playable web page with online lap times.
 ## Next (in order)
 
 ## Later
-11. **Sharing editor tracks** online (Supabase), with their own fastest times.
+11. **Sign-in** so shared tracks have owners (edit or delete your own; limits against flooding).
 12. **Server-side lap validation** — re-simulate submitted input logs in a Supabase Edge Function.
 
 ## Open decisions

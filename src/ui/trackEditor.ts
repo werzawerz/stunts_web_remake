@@ -420,6 +420,11 @@ export class TrackEditor {
     this.dialog = { kind: 'menu', lines, options: [], selected: 0, pick: () => {} };
   }
 
+  /** A message from outside (sharing finished), unless another box is open or the editor closed. */
+  notice(lines: string[]): void {
+    if (this.visible && !this.dialog) this.showMessage(lines);
+  }
+
   /** "Track has been changed": save first, or go on and lose the changes. */
   private changed(goOn: string, then: () => void): void {
     if (!this.dirty) {

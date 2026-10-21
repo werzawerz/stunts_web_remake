@@ -72,3 +72,53 @@ export async function getGhost(trackId: string): Promise<(LapTime & { inputs: nu
   for (let i = 0; i < s.length; i++) inputs.push(s.charCodeAt(i));
   return { player_name: row.player_name, car: row.car, time_ms: row.time_ms, created_at: row.created_at, inputs };
 }
+
+/** A track someone made in the editor and shared. */
+export interface SharedTrack {
+  id: string;
+  name: string;
+  author: string;
+  /** The TRK file, base64. */
+  trkBase64: string;
+  createdAt: string;
+}
+
+/** The shared tracks, newest first. */
+export async function listSharedTracks(limit = 200): Promise<SharedTrack[]> {
+  const db = getClient();
+  if (!db) return [];
+  const { data, error } = await db
+    .from('tracks')
+    .select('id, name, author, trk_base64, created_at')
+    .like('id', 'user-%')
+    .not('trk_base64', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as { id: string; name: string; author: string; trk_base64: string; created_at: string }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    author: r.author,
+    trkBase64: r.trk_base64,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * Share a track: it becomes a new track everyone can load and race (with its own fastest times).
+ * Tracks can't be changed afterwards (no sign-in yet), so saving again shares a new one.
+ * Returns its id, or null when there's no online database.
+ */
+export async function shareTrack(t: { name: string; author: string; trkBase64: string }): Promise<string | null> {
+  const db = getClient();
+  if (!db) return null;
+  const id = `user-${crypto.randomUUID()}`;
+  const { error } = await db.from('tracks').insert({
+    id,
+    name: t.name.slice(0, 40),
+    author: (t.author || 'anonymous').slice(0, 40),
+    trk_base64: t.trkBase64,
+  });
+  if (error) throw error;
+  return id;
+}

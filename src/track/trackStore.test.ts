@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { listTracks, saveTrack } from './trackStore';
+import { listTracks, saveTrack, setOnlineId, trackFromBase64, trackToBase64 } from './trackStore';
 import { createEmptyTrack, Horizon } from './trkFormat';
 
 // Minimal localStorage for the node test environment.
@@ -29,5 +29,19 @@ describe('saved tracks', () => {
     expect(list[0]!.track.elements).toEqual(a.elements);
     expect(list[0]!.track.terrain).toEqual(a.terrain);
     expect(list[0]!.track.horizon).toBe(Horizon.Alpine);
+  });
+});
+
+describe('shared tracks', () => {
+  beforeEach(() => mem.clear());
+
+  it('remembers the online id, and forgets it when saved over', () => {
+    const t = createEmptyTrack();
+    saveTrack('mine', t);
+    setOnlineId('mine', 'user-1');
+    expect(listTracks()[0]!.onlineId).toBe('user-1');
+    expect(trackFromBase64(trackToBase64(t)).elements).toEqual(t.elements);
+    saveTrack('mine', t);
+    expect(listTracks()[0]!.onlineId).toBeUndefined();
   });
 });
