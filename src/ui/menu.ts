@@ -98,7 +98,19 @@ export class MainMenu {
 
   /** Mouse click at 320x200 coordinates. */
   click(x: number, y: number): MenuAction {
-    if (this.screen.kind !== 'main') return this.key('Enter');
+    const s = this.screen;
+    if (s.kind === 'list') {
+      // The box as drawn: rows of 10 pixels under the title; outside it closes the list.
+      const h = 22 + s.items.length * 10;
+      const bx = Math.round((320 - 190) / 2);
+      const by = Math.round((200 - h) / 2);
+      if (x < bx || x >= bx + 190 || y < by || y >= by + h) return this.key('Escape');
+      const row = Math.floor((y - (by + 16)) / 10);
+      if (row < 0 || row >= s.items.length) return { type: 'none' };
+      s.selected = row;
+      return this.key('Enter');
+    }
+    if (s.kind !== 'main') return this.key('Enter');
     const i = ITEMS.findIndex(({ frame: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
     if (i < 0) return { type: 'none' };
     this.selected = i;

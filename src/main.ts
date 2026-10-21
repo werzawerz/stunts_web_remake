@@ -44,6 +44,7 @@ import { OpponentResult, type RaceOutcome } from './ui/opponentResult';
 import { loadOpponent, OPPONENT_COUNT, type OpponentProfile } from './original/opponents';
 import type { Sprite } from './original/cockpit';
 import { collideCars, cloneRival, Rival, type RivalState } from './race/opponent';
+import { isTouchDevice, TouchControls } from './ui/touchControls';
 
 // ---- screen: the 3D view renders at 320x200 like VGA mode 13h and is scaled up with crisp pixels.
 const frame = document.createElement('div');
@@ -85,6 +86,16 @@ const camera = new THREE.PerspectiveCamera(56, SCREEN_W / SCREEN_H, 0.3, 6000);
 
 const fly = new FlyCamera(camera, dash.canvas);
 const input = new KeyboardInput();
+
+/** Press a key as if typed: the touch buttons, and text typed on a phone, go through the keyboard path. */
+function pressKey(key: string, code: string): void {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key, code, bubbles: true }));
+  window.dispatchEvent(new KeyboardEvent('keyup', { key, code, bubbles: true }));
+}
+/** On phones and tablets: on-screen driving controls. */
+const touch = isTouchDevice() ? new TouchControls((code) => pressKey(code === 'KeyC' ? 'c' : code, code)) : null;
+// No pinch or double-tap zoom while playing (iOS ignores the viewport's user-scalable=no).
+document.addEventListener('gesturestart', (e) => e.preventDefault());
 // Car choice (V cycles). Each car gets its own paint, like the original's selection screen.
 const PAINT = [0xd81c1c, 0xe8e8e8, 0xfcd820, 0xc81010, 0x205c30, 0x1c3cc8, 0xa89c74, 0xf0f0f0, 0x6c1c8c, 0x2c2c2c, 0xfc7c1c];
 const vehicleParam = new URLSearchParams(location.search).get('vehicle');
@@ -513,6 +524,19 @@ function menuAction(a: MenuAction): void {
   }
 }
 
+/** Type a name with the phone's own keyboard, then hand it over as key presses. */
+function typeOnPhone(): void {
+  const current = naming() ? (finish?.prompt?.text ?? '') : '';
+  const text = window.prompt(naming() ? 'Your name for the fastest times:' : 'Name:', current);
+  if (text === null) {
+    pressKey('Escape', 'Escape');
+    return;
+  }
+  for (let i = 0; i < 24; i++) pressKey('Backspace', 'Backspace');
+  for (const ch of text) pressKey(ch, /[a-z]/i.test(ch) ? `Key${ch.toUpperCase()}` : /\d/.test(ch) ? `Digit${ch}` : ch === ' ' ? 'Space' : '');
+  pressKey('Enter', 'Enter');
+}
+
 /** A mouse event's position on the 320x200 screen. */
 function screenXY(e: MouseEvent): [number, number] {
   const r = dash.canvas.getBoundingClientRect();
@@ -534,6 +558,11 @@ dash.canvas.addEventListener(
 // Mouse: click a button on the evaluation screen.
 dash.canvas.addEventListener('click', (e) => {
   const [x, y] = screenXY(e);
+  // Phones have no keys to type with: a tap where a name is wanted opens the system text box.
+  if (touch && (naming() || (replayView.visible && replayView.typing) || trackEditor.typing)) {
+    typeOnPhone();
+    return;
+  }
   if (trackEditor.visible) {
     editorAction(trackEditor.click(x, y));
     return;
@@ -1288,6 +1317,18 @@ renderer.setAnimationLoop((now) => {
   const frameDt = Math.min((now - last) / 1000, 0.1);
   last = now;
   // The opponent learns its lap while the player is in the menus or waiting on the start line.
+  touch?.set(
+    !menu.visible &&
+      !showroom.visible &&
+      !trackSelect.visible &&
+      !opponentSelect.visible &&
+      !trackEditor.visible &&
+      !replayView.visible &&
+      !opponentResult.visible &&
+      !evaluationShown() &&
+      view !== 'free',
+    manualGearbox,
+  );
   if (rivalLearning && lap.phase === 'ready') learnABit(menu.visible || trackSelect.visible || opponentSelect.visible || showroom.visible ? 12 : 6);
   if (replayView.visible && replay && rframe) {
     acc = 0;
@@ -1404,7 +1445,7 @@ renderer.setAnimationLoop((now) => {
   }
   acc += frameDt;
   while (acc >= DT) {
-    const raw = input.mask();
+    const raw = input.mask() | (touch?.mask() ?? 0);
     if (raw & INPUT.Reset && !naming()) resetCar(); // R types a letter in the name box
     // After the finish the car just rolls out.
     const mask = lap.phase === 'finished' ? 0 : raw;
@@ -1555,7 +1596,7 @@ renderer.setAnimationLoop((now) => {
         ? 'FREE CAM: WASD Q/E SHIFT, DRAG. C: BACK TO CAR'
         : now < flashUntil
           ? flashText
-          : car.ticks < 240
+          : car.ticks < 240 && !touch
             ? 'ARROWS DRIVE  R RESTART  ESC REPLAY/MENU  C CAMERA  M SOUND'
             : '',
   });
