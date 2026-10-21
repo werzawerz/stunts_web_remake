@@ -94,6 +94,11 @@ function pressKey(key: string, code: string): void {
 }
 /** On phones and tablets: on-screen driving controls. */
 const touch = isTouchDevice() ? new TouchControls((code) => pressKey(code === 'KeyC' ? 'c' : code, code)) : null;
+// Sound may only start in a user gesture; iOS is pickiest about which (touchend counts), and pauses
+// it when the app goes to the background. Any touch, click or key (re)starts it.
+for (const type of ['touchend', 'pointerdown', 'click', 'keydown'] as const) {
+  window.addEventListener(type, () => sound.start(), { capture: true, passive: true });
+}
 // No pinch or double-tap zoom while playing (iOS ignores the viewport's user-scalable=no).
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 // Car choice (V cycles). Each car gets its own paint, like the original's selection screen.

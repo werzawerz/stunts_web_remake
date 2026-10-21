@@ -40,8 +40,10 @@ export class CarSound {
 
   /** Create the audio graph; call from a user gesture (browsers block audio before one). */
   start(): void {
+    playThroughSilentSwitch();
     if (this.ctx || typeof AudioContext === 'undefined') {
-      void this.ctx?.resume();
+      // iOS suspends ("interrupted") the context when the app goes to the background.
+      if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume();
       return;
     }
     const ctx = new AudioContext();
@@ -156,4 +158,47 @@ export class CarSound {
       g.exponentialRampToValueAtTime(0.01, t + 0.3);
     }, 300);
   }
+}
+
+let silentClip: HTMLAudioElement | null = null;
+
+/**
+ * iPhones mute web audio when the ring/silent switch is on, as if it were a ringtone. Declaring the
+ * page's audio as media playback lifts that (Safari 16.4+: navigator.audioSession); older iOS gets
+ * the same from a silent clip playing in an audio element. Call from a user gesture.
+ */
+function playThroughSilentSwitch(): void {
+  const nav = navigator as Navigator & { audioSession?: { type: string } };
+  if (nav.audioSession) {
+    try {
+      nav.audioSession.type = 'playback';
+    } catch {
+      // Not allowed here; the clip below still helps.
+    }
+  }
+  if (silentClip || typeof Audio === 'undefined') return;
+  // A tenth of a second of silence (8 kHz, 8-bit mono WAV), looped.
+  const n = 800;
+  const bytes = new Uint8Array(44 + n);
+  const dv = new DataView(bytes.buffer);
+  const text = (o: number, t: string): void => [...t].forEach((ch, i) => (bytes[o + i] = ch.charCodeAt(0)));
+  text(0, 'RIFF');
+  dv.setUint32(4, 36 + n, true);
+  text(8, 'WAVEfmt ');
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); // PCM
+  dv.setUint16(22, 1, true); // mono
+  dv.setUint32(24, 8000, true);
+  dv.setUint32(28, 8000, true);
+  dv.setUint16(32, 1, true);
+  dv.setUint16(34, 8, true);
+  text(36, 'data');
+  dv.setUint32(40, n, true);
+  bytes.fill(128, 44); // 8-bit silence
+  silentClip = new Audio(URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' })));
+  silentClip.loop = true;
+  silentClip.setAttribute('playsinline', '');
+  void silentClip.play().catch(() => {
+    silentClip = null; // try again on the next gesture
+  });
 }
