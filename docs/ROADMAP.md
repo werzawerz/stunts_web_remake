@@ -77,6 +77,6 @@ with our own assets, deployed as a playable web page with online lap times.
 ## Principles
 - Faithful to the original: check mechanics on wiki.stunts.hu and measurements in the original
   files; compare against screenshots.
-- Original files stay out of the repo: they are read at runtime from the owner's local copy
-  (measurements, car models, cockpits); our own stand-ins are used when they are absent.
+- Original files are read at runtime: the owner's local copy in development, the published
+  `public/original/` (only the files the game reads) on the site; our own stand-ins when absent.
 - Deterministic simulation (fixed 60 Hz, pure functions of input) so replays and validation work.

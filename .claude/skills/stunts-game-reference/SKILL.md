@@ -8,7 +8,7 @@ description: Reference for how the original DOS game Stunts (1990, Distinctive S
 Developer Distinctive Software (Kevin Pickell et al.), published by Broderbund; in Europe "4D Sports Driving" (Mindscape). Original source code is lost. Community hub: https://wiki.stunts.hu, forum https://forum.stunts.hu, competitions https://zak.stunts.hu.
 
 ## Legal stance for this project
-Original assets (3D shapes, car bitmaps, tracks, music) are copyrighted. **We ship only our own assets.** We may: implement documented file formats (TRK), read community docs for facts/numbers, let users import their own .TRK files. We do NOT copy code from restunts (disassembly) or bundle original files.
+Original assets (3D shapes, pictures, tracks, music) are copyrighted. By the owner's decision (2026-10-18) the site publishes exactly the original files the game reads (`public/original/`); this must be revisited before any monetisation. We implement documented file formats, read community docs and the restunts disassembly for facts/numbers, but never copy restunts code. Our own stand-ins work when the files are absent.
 
 ## Game flow (original)
 1. Main menu: Drive · Select Car · Select Track · Track Editor (and Opponent selection).
